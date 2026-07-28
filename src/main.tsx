@@ -42,6 +42,8 @@ const START_SLOTS = Array.from(
 const BOOKING_WINDOW_DAYS = 14;
 const WEEKEND_CLOSED_MESSAGE =
   "Bookings are unavailable on Fridays and Saturdays.";
+const GOOGLE_CONTACTS_SCOPE =
+  "https://www.googleapis.com/auth/contacts.readonly";
 
 interface Room {
   id: string;
@@ -127,6 +129,12 @@ interface AuthConfig {
   publishableKey?: string;
 }
 
+interface AttendeeContact {
+  email: string;
+  name: string;
+  source: "google" | "manual";
+}
+
 function localISO(date: Date): string {
   const offset = date.getTimezoneOffset();
   return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 10);
@@ -166,6 +174,30 @@ function formatDuration(minutes: number): string {
 
 function organizerGroupLabel(value: OrganizerGroup): string {
   return value === "Joint" ? "PLAYBOOK & O&H" : value;
+}
+
+function attendeeEmails(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[,;\n]+/)
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function validAttendeeEmail(value: string): boolean {
+  return (
+    value.length <= 120 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+  );
+}
+
+function attendeeSummary(value: string): string {
+  const emails = attendeeEmails(value);
+  if (!emails.length) return "Solo";
+  return emails.length === 1 ? emails[0]! : `${emails.length} attendees`;
 }
 
 function dateBounds(): { minimum: string; maximum: string } {
@@ -1410,6 +1442,203 @@ function LoadingButtonLabel({
   );
 }
 
+interface AttendeeSelectorProps {
+  contacts: AttendeeContact[];
+  loading: boolean;
+  importing: boolean;
+  directoryError: string;
+  draft: BookingDraft;
+  onDraft: (next: BookingDraft) => void;
+  onImport: () => void;
+}
+
+function AttendeeSelector({
+  contacts,
+  loading,
+  importing,
+  directoryError,
+  draft,
+  onDraft,
+  onImport,
+}: AttendeeSelectorProps) {
+  const [query, setQuery] = useState("");
+  const [focused, setFocused] = useState(false);
+  const [inputError, setInputError] = useState("");
+  const selected = useMemo(
+    () => attendeeEmails(draft.attendees),
+    [draft.attendees],
+  );
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const contactByEmail = useMemo(
+    () => new Map(contacts.map((contact) => [contact.email, contact])),
+    [contacts],
+  );
+  const normalizedQuery = query.trim().toLowerCase();
+  const suggestions = useMemo(
+    () =>
+      contacts
+        .filter(
+          (contact) =>
+            !selectedSet.has(contact.email) &&
+            (!normalizedQuery ||
+              contact.email.includes(normalizedQuery) ||
+              contact.name.toLowerCase().includes(normalizedQuery)),
+        )
+        .slice(0, 8),
+    [contacts, normalizedQuery, selectedSet],
+  );
+
+  const saveSelected = (emails: string[]) => {
+    onDraft({ ...draft, attendees: emails.join(", ") });
+  };
+
+  const addEmail = (rawValue: string) => {
+    const email = rawValue.trim().toLowerCase();
+    if (!validAttendeeEmail(email)) {
+      setInputError("Enter a complete email address.");
+      return;
+    }
+    if (selectedSet.has(email)) {
+      setInputError("That attendee is already selected.");
+      return;
+    }
+    const next = [...selected, email];
+    if (next.length > 30 || next.join(", ").length > 500) {
+      setInputError("You can select up to 30 attendee emails.");
+      return;
+    }
+    saveSelected(next);
+    setQuery("");
+    setInputError("");
+  };
+
+  const removeEmail = (email: string) => {
+    saveSelected(selected.filter((candidate) => candidate !== email));
+    setInputError("");
+  };
+
+  return (
+    <div className="attendee-field">
+      <div className="attendee-label-row">
+        <label htmlFor="attendee-search">Attendees</label>
+        <span>Optional</span>
+      </div>
+      <input type="hidden" name="attendees" value={draft.attendees} />
+      {selected.length > 0 && (
+        <div className="attendee-chips" aria-label="Selected attendees">
+          {selected.map((email) => {
+            const contact = contactByEmail.get(email);
+            return (
+              <span className="attendee-chip" key={email}>
+                <span>
+                  {contact?.name && <strong>{contact.name}</strong>}
+                  <small>{email}</small>
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${contact?.name || email}`}
+                  onClick={() => removeEmail(email)}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+      <div className="attendee-combobox">
+        <div className="attendee-input-row">
+          <input
+            id="attendee-search"
+            type="email"
+            inputMode="email"
+            autoComplete="off"
+            placeholder="Search a saved contact or enter an email"
+            value={query}
+            aria-autocomplete="list"
+            aria-expanded={focused && suggestions.length > 0}
+            aria-controls="attendee-suggestions"
+            aria-describedby="attendee-help"
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setInputError("");
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" ||
+                (event.key === "," && query.trim())
+              ) {
+                event.preventDefault();
+                addEmail(query);
+              }
+            }}
+          />
+          <button
+            className="attendee-add-button"
+            type="button"
+            disabled={!query.trim()}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => addEmail(query)}
+          >
+            Add
+          </button>
+        </div>
+        {focused && suggestions.length > 0 && (
+          <div
+            className="attendee-suggestions"
+            id="attendee-suggestions"
+            role="listbox"
+          >
+            {suggestions.map((contact) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                key={contact.email}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => addEmail(contact.email)}
+              >
+                <strong>{contact.name || contact.email}</strong>
+                {contact.name && <span>{contact.email}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {!selected.length && (
+        <p className="attendee-empty">No attendees selected — solo booking.</p>
+      )}
+      {inputError && (
+        <p className="attendee-field-error" role="alert">
+          {inputError}
+        </p>
+      )}
+      <div className="attendee-directory-row">
+        <p id="attendee-help">
+          {loading
+            ? "Loading saved contacts…"
+            : "Manual emails are remembered for future bookings."}
+        </p>
+        <button
+          type="button"
+          className="attendee-import-button"
+          disabled={importing}
+          onClick={onImport}
+        >
+          {importing ? "Importing…" : "Import/refresh Enrollment"}
+        </button>
+      </div>
+      {directoryError && (
+        <p className="attendee-field-error" role="status">
+          {directoryError}
+        </p>
+      )}
+    </div>
+  );
+}
+
 interface DetailsDrawerProps {
   open: boolean;
   room?: Room;
@@ -1419,6 +1648,10 @@ interface DetailsDrawerProps {
   availabilityError: string;
   draft: BookingDraft;
   identityLocked: boolean;
+  attendeeContacts: AttendeeContact[];
+  attendeeContactsLoading: boolean;
+  attendeeImporting: boolean;
+  attendeeDirectoryError: string;
   editing: boolean;
   submitting: boolean;
   formError: string;
@@ -1429,6 +1662,7 @@ interface DetailsDrawerProps {
   onChooseStart: (slot: number) => void;
   onChooseDuration: (duration: number) => void;
   onRetryAvailability: () => void;
+  onImportAttendees: () => void;
   onClose: () => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
 }
@@ -1442,6 +1676,10 @@ function DetailsDrawer({
   availabilityError,
   draft,
   identityLocked,
+  attendeeContacts,
+  attendeeContactsLoading,
+  attendeeImporting,
+  attendeeDirectoryError,
   editing,
   submitting,
   formError,
@@ -1452,6 +1690,7 @@ function DetailsDrawer({
   onChooseStart,
   onChooseDuration,
   onRetryAvailability,
+  onImportAttendees,
   onClose,
   onSubmit,
 }: DetailsDrawerProps) {
@@ -1555,7 +1794,7 @@ function DetailsDrawer({
                   </motion.dd>
                 </AnimatePresence>
                 <dt>Attendees</dt>
-                <dd>{draft.attendees.trim() || "Not entered"}</dd>
+                <dd>{attendeeSummary(draft.attendees)}</dd>
               </dl>
             </div>
             {editing && room && (
@@ -1755,20 +1994,15 @@ function DetailsDrawer({
                 }
               />
             </label>
-            <label>
-              Attendees <span>*</span>
-              <textarea
-                name="attendees"
-                required
-                maxLength={500}
-                rows={3}
-                placeholder="Names or email addresses; enter Solo if no other attendees"
-                value={draft.attendees}
-                onChange={(event) =>
-                  onDraft({ ...draft, attendees: event.target.value })
-                }
-              />
-            </label>
+            <AttendeeSelector
+              contacts={attendeeContacts}
+              loading={attendeeContactsLoading}
+              importing={attendeeImporting}
+              directoryError={attendeeDirectoryError}
+              draft={draft}
+              onDraft={onDraft}
+              onImport={onImportAttendees}
+            />
             <label>
               Notes <small>Optional</small>
               <textarea
@@ -2022,7 +2256,7 @@ function Confirmation({
         <p>
           <strong>{item.meetingTitle}</strong>
         </p>
-        <p>Attendees: {item.attendees}</p>
+        <p>Attendees: {item.attendees || "Solo booking"}</p>
         <div className="reference">
           <span>BOOKING REFERENCE</span>
           <strong>{item.reference}</strong>
@@ -2221,6 +2455,18 @@ function App() {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [attendeeContacts, setAttendeeContacts] = useState<
+    AttendeeContact[]
+  >([]);
+  const [attendeeContactsLoading, setAttendeeContactsLoading] =
+    useState(false);
+  const [attendeeDirectoryError, setAttendeeDirectoryError] = useState("");
+  const [attendeeImporting, setAttendeeImporting] = useState(false);
+  const [googleProviderToken, setGoogleProviderToken] = useState(
+    () =>
+      window.sessionStorage.getItem("playbook-google-provider-token") ||
+      "",
+  );
   const [selection, setSelection] = useState<Selection>({
     date: initialDate,
     room: "",
@@ -2290,6 +2536,22 @@ function App() {
           apiAccessToken = session?.access_token || "";
           setAuthUser(session?.user || null);
           setAuthStatus(session ? "signedIn" : "signedOut");
+          const contactsRequested =
+            window.sessionStorage.getItem(
+              "playbook-google-contacts-requested",
+            ) === "1";
+          if (session?.provider_token && contactsRequested) {
+            window.sessionStorage.setItem(
+              "playbook-google-provider-token",
+              session.provider_token,
+            );
+            setGoogleProviderToken(session.provider_token);
+          } else if (!session) {
+            window.sessionStorage.removeItem(
+              "playbook-google-provider-token",
+            );
+            setGoogleProviderToken("");
+          }
           if (session) setAuthError("");
         };
         const { data, error } = await client.auth.getSession();
@@ -2333,6 +2595,31 @@ function App() {
     const timeout = window.setTimeout(() => setToast(null), 2800);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  const loadAttendeeContacts = useCallback(async () => {
+    setAttendeeContactsLoading(true);
+    setAttendeeDirectoryError("");
+    try {
+      const result = await api<{ contacts?: AttendeeContact[] }>(
+        "/api/attendees",
+      );
+      setAttendeeContacts(
+        Array.isArray(result.contacts) ? result.contacts : [],
+      );
+    } catch (error) {
+      setAttendeeDirectoryError((error as ApiError).message);
+    } finally {
+      setAttendeeContactsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== "signedIn") return;
+    const timeout = window.setTimeout(() => {
+      void loadAttendeeContacts();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [authStatus, loadAttendeeContacts]);
 
   const loadAvailability = useCallback(
     async (date: string, token: string | null = null): Promise<BusyInterval[]> => {
@@ -2863,11 +3150,10 @@ function App() {
     if (
       !payload.name ||
       !payload.organizerGroup ||
-      !payload.attendees ||
       !payload.title
     ) {
       showFormError(
-        "Enter the booking team, owner, attendees, and meeting title or purpose.",
+        "Enter the booking team, owner, and meeting title or purpose.",
       );
       return;
     }
@@ -2892,6 +3178,7 @@ function App() {
       );
       const nextToken = result.token || token;
       if (!nextToken) throw new Error("The private booking link was not created.");
+      void loadAttendeeContacts();
       document.querySelector("#details-drawer")?.setAttribute("inert", "");
       document
         .querySelector("#details-drawer")
@@ -3019,6 +3306,80 @@ function App() {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
+  const importEnrollmentContacts = useCallback(
+    async (providerToken: string) => {
+      if (!providerToken || attendeeImporting) return;
+      setAttendeeImporting(true);
+      setAttendeeDirectoryError("");
+      try {
+        const result = await api<{
+          imported: number;
+          group: string;
+        }>("/api/attendees/import-google", {
+          method: "POST",
+          body: JSON.stringify({ providerToken }),
+        });
+        await loadAttendeeContacts();
+        showToast(
+          result.imported
+            ? `Imported ${result.imported} contacts from ${result.group}.`
+            : `${result.group} has no contacts to import.`,
+        );
+      } catch (error) {
+        setAttendeeDirectoryError((error as ApiError).message);
+      } finally {
+        window.sessionStorage.removeItem(
+          "playbook-google-provider-token",
+        );
+        window.sessionStorage.removeItem(
+          "playbook-google-contacts-requested",
+        );
+        setGoogleProviderToken("");
+        setAttendeeImporting(false);
+      }
+    },
+    [attendeeImporting, loadAttendeeContacts, showToast],
+  );
+
+  useEffect(() => {
+    if (authStatus !== "signedIn" || !googleProviderToken) return;
+    const timeout = window.setTimeout(() => {
+      void importEnrollmentContacts(googleProviderToken);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [
+    authStatus,
+    googleProviderToken,
+    importEnrollmentContacts,
+  ]);
+
+  const requestEnrollmentContacts = async () => {
+    if (!authClient || attendeeImporting) return;
+    setAttendeeDirectoryError("");
+    window.sessionStorage.setItem(
+      "playbook-google-contacts-requested",
+      "1",
+    );
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const { error } = await authClient.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo,
+        scopes: GOOGLE_CONTACTS_SCOPE,
+        queryParams: {
+          include_granted_scopes: "true",
+          prompt: "consent",
+        },
+      },
+    });
+    if (error) {
+      window.sessionStorage.removeItem(
+        "playbook-google-contacts-requested",
+      );
+      setAttendeeDirectoryError(error.message);
+    }
+  };
+
   const signInWithGoogle = async () => {
     if (!authClient) return;
     setAuthBusy(true);
@@ -3044,6 +3405,14 @@ function App() {
       return;
     }
     apiAccessToken = "";
+    window.sessionStorage.removeItem(
+      "playbook-google-provider-token",
+    );
+    window.sessionStorage.removeItem(
+      "playbook-google-contacts-requested",
+    );
+    setGoogleProviderToken("");
+    setAttendeeContacts([]);
     setAuthUser(null);
     setAuthStatus("signedOut");
     setAuthBusy(false);
@@ -3189,6 +3558,10 @@ function App() {
         availabilityError={availabilityError}
         draft={visibleDraft}
         identityLocked
+        attendeeContacts={attendeeContacts}
+        attendeeContactsLoading={attendeeContactsLoading}
+        attendeeImporting={attendeeImporting}
+        attendeeDirectoryError={attendeeDirectoryError}
         editing={Boolean(editingToken)}
         submitting={submitting}
         formError={formError}
@@ -3204,6 +3577,7 @@ function App() {
         onRetryAvailability={() =>
           void loadAvailability(selection.date, editingToken)
         }
+        onImportAttendees={() => void requestEnrollmentContacts()}
         onClose={closeDetails}
         onSubmit={(event) => void confirmBooking(event)}
       />

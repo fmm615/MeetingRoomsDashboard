@@ -32,14 +32,19 @@ room blocks, database functions, conflict constraints, and server-only
 permissions. The participant migration safely upgrades projects that already
 applied the initial schema. The availability-broadcast migration adds
 privacy-safe Realtime invalidation events for bookings and room blocks.
+The attendee-directory migration makes attendees optional and creates a
+server-only shared directory for Enrollment imports and previously used
+attendee emails.
 
 The publishable key is intentionally browser-safe. Never expose the Supabase
 secret key to browser code.
 
-## Google login setup for local testing
+## Google login and Contacts setup for local testing
 
-This milestone requests only the basic Google identity scopes (`openid`,
-email, and profile). It does not request Google Calendar access yet.
+Normal login requests only the basic Google identity scopes (`openid`, email,
+and profile). Google Contacts access is requested separately and only when a
+signed-in user selects **Import/refresh Enrollment**. Google Calendar access is
+not requested yet.
 
 ### 1. Create the Google OAuth client
 
@@ -79,7 +84,24 @@ In Supabase Dashboard:
    http://127.0.0.1:8080/**
    ```
 
-### 3. Restrict company domains (optional for the first test)
+### 3. Enable the Enrollment contact import
+
+In Google Cloud Console:
+
+1. Open **APIs & Services → Library** and enable **Google People API**.
+2. Open **Google Auth Platform → Data Access → Add or remove scopes**.
+3. Add this read-only scope:
+
+   ```text
+   https://www.googleapis.com/auth/contacts.readonly
+   ```
+
+4. If the OAuth audience is External and still in Testing, add each person who
+   will test the import as a test user.
+5. Keep the shared team contacts under a Google Contacts label named exactly
+   `Enrollment`.
+
+### 4. Restrict company domains (optional for the first test)
 
 To reject Google accounts outside approved company domains, add a
 comma-separated list to `.env`:
@@ -105,7 +127,11 @@ The first page is now a Google sign-in gate. After successful login:
 - the header shows the signed-in account and a sign-out button;
 - the booking owner name and organizer email come from Google and are read-only;
 - every booking API request includes the Supabase access token;
-- the server verifies that token with Supabase before reading or changing data.
+- the server verifies that token with Supabase before reading or changing data;
+- attendees are optional, so an empty selection creates a solo booking;
+- saved contacts are searchable and manual attendee emails are remembered;
+- **Import/refresh Enrollment** asks for read-only Contacts permission and
+  copies only that label into the shared attendee directory.
 
 `npm start` creates the browser bundle with esbuild and starts the Node server. Supabase is the only runtime database.
 
@@ -119,7 +145,8 @@ The first page is now a Google sign-in gate. After successful login:
 - Reduced-motion support
 - Google sign-in with server-verified Supabase sessions
 - Google-supplied booking owner name and organizer email
-- Required booking team (PLAYBOOK, O&H, or joint), attendee list, and meeting title or purpose; optional notes
+- Required booking team (PLAYBOOK, O&H, or joint) and meeting title or purpose; optional attendees and notes
+- Searchable saved attendees, manual email entry, and read-only Google Contacts `Enrollment` import
 - Server-side room, date, past-time, office-hours, and duration validation
 - Atomic Postgres exclusion constraints preventing confirmed room/time overlaps
 - Postgres triggers protecting weekends, room blocks, active-room rules, and durations
@@ -156,8 +183,8 @@ Use one shared calendar process:
 
 1. Choose a Sunday–Thursday date, an available room, a start time, and a
    duration.
-2. Record PLAYBOOK, O&H, or a joint booking; the meeting title; attendees (or
-   `Solo`); and optional notes. Google supplies the owner name and email.
+2. Record PLAYBOOK, O&H, or a joint booking; the meeting title; optional
+   attendees; and optional notes. Google supplies the owner name and email.
 3. Keep the booking reference and send the private management link to the
    meeting owner.
 4. Use that link for all edits and cancellations. The original slot is released
@@ -179,6 +206,8 @@ refetches the protected availability API.
 - `/api/rooms` — active room catalogue
 - `/api/availability` — non-PII busy intervals
 - `/api/realtime-config` — browser-safe Realtime URL and publishable key
+- `/api/attendees` — protected saved-attendee suggestions
+- `/api/attendees/import-google` — protected read-only Enrollment import
 - `/api/bookings` — create a booking
 - `/api/bookings/[token]` — view, edit, or cancel via private token
 
@@ -193,6 +222,7 @@ npm run check
 ```
 
 The API tests use an in-memory store double, not a second database. The Supabase migrations are checked for overlap, weekend, room-block, RLS, service-role, Realtime payload, and browser-configuration protections.
+The Google Contacts tests use a mock People API and do not access a real account.
 
 The optional browser suites require Chrome remote debugging and a configured local Supabase project:
 

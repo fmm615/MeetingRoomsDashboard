@@ -4,7 +4,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { createApp, hashToken } = require("../server");
+const {
+  createApp,
+  hashToken,
+  loadGoogleContactGroup
+} = require("../server");
 const { ROOM_CONFIGURATIONS } = require("../room-config");
 const {
   createSupabaseClientFromEnv,
@@ -32,7 +36,7 @@ const BASE_BOOKING = {
   end: 12,
   name: "Mahmood",
   organizerGroup: "PLAYBOOK",
-  attendees: "Sara, Ahmed",
+  attendees: "sara@playbook.test, ahmed@oh.test",
   title: "Product review",
   notes: "Bring the latest plan."
 };
@@ -65,6 +69,7 @@ class MemoryStore {
     }));
     this.bookings = [];
     this.blocks = [];
+    this.attendeeDirectory = [];
     this.nextId = 1;
   }
 
@@ -132,6 +137,56 @@ class MemoryStore {
       (left, right) =>
         left.room.localeCompare(right.room) || left.start - right.start
     );
+  }
+
+  async listAttendeeDirectory() {
+    return this.attendeeDirectory
+      .filter(contact => contact.enabled)
+      .map(({ email, name, source }) => ({ email, name, source }))
+      .sort((left, right) =>
+        (left.name || left.email).localeCompare(right.name || right.email)
+      );
+  }
+
+  async importAttendeeDirectory(contacts, timestamp) {
+    for (const contact of contacts) {
+      const existing = this.attendeeDirectory.find(
+        candidate => candidate.email === contact.email
+      );
+      if (existing) {
+        Object.assign(existing, {
+          name: contact.name,
+          source: "google",
+          enabled: true,
+          updated_at: timestamp
+        });
+      } else {
+        this.attendeeDirectory.push({
+          ...contact,
+          source: "google",
+          enabled: true,
+          created_at: timestamp,
+          updated_at: timestamp
+        });
+      }
+    }
+  }
+
+  async rememberAttendeeEmails(emails, timestamp) {
+    for (const email of emails) {
+      if (
+        !this.attendeeDirectory.some(contact => contact.email === email)
+      ) {
+        this.attendeeDirectory.push({
+          email,
+          name: "",
+          source: "manual",
+          enabled: true,
+          created_at: timestamp,
+          updated_at: timestamp
+        });
+      }
+    }
   }
 
   enforceRules(value, excludedId = null) {
@@ -360,8 +415,8 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
   const invalidCases = [
     [{ organizerGroup: "" }, /PLAYBOOK, O&H, or both/i],
     [{ organizerGroup: "Another team" }, /PLAYBOOK, O&H, or both/i],
-    [{ attendees: "" }, /attendee names/i],
     [{ attendees: "x".repeat(501) }, /500 characters/i],
+    [{ attendees: "not-an-email" }, /complete attendee email/i],
     [{ title: "" }, /meeting title/i],
     [{ date: "2026-07-26" }, /between/i],
     [{ date: "2026-08-11" }, /between/i],
@@ -390,6 +445,14 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
     assert.equal(availability.response.status, 400);
     assert.match(availability.body.error, /Fridays and Saturdays/i);
   }
+
+  const solo = await createBooking(app, {
+    ...BASE_BOOKING,
+    date: "2026-08-05",
+    attendees: ""
+  });
+  assert.equal(solo.response.status, 201);
+  assert.equal(solo.body.booking.attendees, "");
 });
 
 test("overlaps, back-to-back boundaries, and room blocks remain protected", async t => {
@@ -475,12 +538,15 @@ test("private tokens protect edits, preserve email, and cancellation frees avail
   const created = await createBooking(app, {
     ...BASE_BOOKING,
     organizerGroup: "Joint",
-    attendees: "Mahmood, Sara, Ahmed",
+    attendees: "mahmood@playbook.test, sara@playbook.test, ahmed@oh.test",
     email: "legacy@example.com"
   });
   assert.equal(created.response.status, 201);
   assert.equal(created.body.booking.organizerGroup, "Joint");
-  assert.equal(created.body.booking.attendees, "Mahmood, Sara, Ahmed");
+  assert.equal(
+    created.body.booking.attendees,
+    "mahmood@playbook.test, sara@playbook.test, ahmed@oh.test"
+  );
   assert.match(created.body.token, /^[a-f0-9]{48}$/);
   assert.match(created.body.booking.reference, /^PB-[A-F0-9]{16}$/);
   assert.equal(
@@ -506,7 +572,10 @@ test("private tokens protect edits, preserve email, and cancellation frees avail
   assert.equal(updated.body.booking.date, "2026-07-29");
   assert.equal(updated.body.booking.durationMinutes, 45);
   assert.equal(updated.body.booking.organizerGroup, "PLAYBOOK");
-  assert.equal(updated.body.booking.attendees, "Sara, Ahmed");
+  assert.equal(
+    updated.body.booking.attendees,
+    "sara@playbook.test, ahmed@oh.test"
+  );
   assert.equal(updated.body.booking.email, TEST_GOOGLE_USER.email);
 
   const privateAvailability = await app.request(
@@ -551,7 +620,7 @@ test("availability exposes intervals without booking PII", async t => {
     start: 6,
     end: 9,
     name: "Sara",
-    attendees: "Mahmood, Ahmed",
+    attendees: "mahmood@playbook.test, ahmed@oh.test",
     title: "Quick planning",
     notes: "Bring notes"
   });
@@ -565,7 +634,7 @@ test("availability exposes intervals without booking PII", async t => {
   ]);
   assert.doesNotMatch(
     JSON.stringify(availability.body),
-    /Sara|Mahmood|Ahmed|Quick planning|Bring notes|PB-/
+    /Sara|mahmood@playbook\.test|ahmed@oh\.test|Quick planning|Bring notes|PB-/
   );
 });
 
@@ -668,6 +737,175 @@ test("Postgres migration enforces conflicts, workweek rules, and server-only acc
   assert.match(startIntervalUpgrade, /START_TIME_INTERVAL/);
   assert.match(startIntervalUpgrade, /mod\(new\.start_slot,\s*2\)/i);
   assert.doesNotMatch(startIntervalUpgrade, /alter table[\s\S]*add constraint/i);
+
+  const attendeeUpgrade = fs.readFileSync(
+    path.join(
+      __dirname, "..", "supabase", "migrations",
+      "20260728040000_add_optional_attendee_directory.sql"
+    ),
+    "utf8"
+  );
+  assert.match(
+    attendeeUpgrade,
+    /check\s*\(length\(btrim\(attendees\)\)\s*<=\s*500\)/i
+  );
+  assert.match(attendeeUpgrade, /create table if not exists public\.attendee_directory/i);
+  assert.match(attendeeUpgrade, /enable row level security/i);
+  assert.match(
+    attendeeUpgrade,
+    /revoke all[\s\S]*from public, anon, authenticated/i
+  );
+  assert.match(
+    attendeeUpgrade,
+    /grant select, insert, update[\s\S]*to service_role/i
+  );
+  assert.match(attendeeUpgrade, /source in \('google', 'manual'\)/i);
+});
+
+test("Google Contacts loader imports only valid Enrollment members", async () => {
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    const value = String(url);
+    requests.push({ url: value, authorization: options.headers.Authorization });
+    let payload;
+    if (value.includes("openidconnect.googleapis.com")) {
+      payload = { email: TEST_GOOGLE_USER.email };
+    } else if (
+      value.includes("/contactGroups?") &&
+      !value.includes("/contactGroups/enrollment")
+    ) {
+      payload = {
+        contactGroups: [
+          {
+            name: "Enrollment",
+            resourceName: "contactGroups/enrollment",
+            memberCount: 3
+          }
+        ]
+      };
+    } else if (value.includes("/contactGroups/enrollment")) {
+      payload = {
+        memberResourceNames: [
+          "people/sara",
+          "people/self",
+          "people/invalid"
+        ]
+      };
+    } else {
+      payload = {
+        responses: [
+          {
+            person: {
+              names: [{ displayName: "Sara" }],
+              emailAddresses: [
+                { value: "Sara@Playbook.test", metadata: { primary: true } }
+              ]
+            }
+          },
+          {
+            person: {
+              names: [{ displayName: "Mahmood" }],
+              emailAddresses: [{ value: TEST_GOOGLE_USER.email }]
+            }
+          },
+          {
+            person: {
+              names: [{ displayName: "Missing Email" }],
+              emailAddresses: [{ value: "not-an-email" }]
+            }
+          }
+        ]
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return payload;
+      }
+    };
+  };
+
+  const contacts = await loadGoogleContactGroup(
+    "google-provider-token-with-contacts-scope",
+    { email: TEST_GOOGLE_USER.email },
+    { fetchImpl }
+  );
+  assert.deepEqual(contacts, [
+    { name: "Sara", email: "sara@playbook.test" }
+  ]);
+  assert.equal(requests.length, 4);
+  assert.ok(
+    requests.every(
+      request =>
+        request.authorization ===
+        "Bearer google-provider-token-with-contacts-scope"
+    )
+  );
+});
+
+test("attendee directory supports solo bookings, remembered emails, and Enrollment imports", async t => {
+  const googleContactsLoader = async (providerToken, signedInUser) => {
+    assert.equal(providerToken, "google-provider-token-with-contacts-scope");
+    assert.equal(signedInUser.email, TEST_GOOGLE_USER.email);
+    return [
+      { name: "Sara", email: "sara@playbook.test" },
+      { name: "Fatima", email: "fatima@oh.test" }
+    ];
+  };
+  const app = await fixture({ googleContactsLoader });
+  t.after(app.close);
+
+  const initial = await app.request("/api/attendees");
+  assert.equal(initial.response.status, 200);
+  assert.deepEqual(initial.body.contacts, []);
+
+  const solo = await createBooking(app, {
+    ...BASE_BOOKING,
+    attendees: ""
+  });
+  assert.equal(solo.response.status, 201);
+  assert.deepEqual((await app.request("/api/attendees")).body.contacts, []);
+
+  const teamBooking = await createBooking(app, {
+    ...BASE_BOOKING,
+    date: "2026-07-29",
+    attendees: "sara@playbook.test, ahmed@oh.test"
+  });
+  assert.equal(teamBooking.response.status, 201);
+  assert.equal(
+    (await app.request("/api/attendees")).body.contacts.length,
+    2
+  );
+
+  const imported = await app.request("/api/attendees/import-google", {
+    method: "POST",
+    body: JSON.stringify({
+      providerToken: "google-provider-token-with-contacts-scope"
+    })
+  });
+  assert.equal(imported.response.status, 200);
+  assert.equal(imported.body.group, "Enrollment");
+  assert.equal(imported.body.imported, 2);
+
+  const directory = (await app.request("/api/attendees")).body.contacts;
+  assert.deepEqual(
+    directory.map(contact => contact.email),
+    ["ahmed@oh.test", "fatima@oh.test", "sara@playbook.test"]
+  );
+  assert.deepEqual(
+    directory.find(contact => contact.email === "sara@playbook.test"),
+    {
+      email: "sara@playbook.test",
+      name: "Sara",
+      source: "google"
+    }
+  );
+
+  const anonymous = await app.request("/api/attendees", {
+    authenticated: false
+  });
+  assert.equal(anonymous.response.status, 401);
 });
 
 test("Google authentication protects booking APIs and supplies owner identity", async t => {

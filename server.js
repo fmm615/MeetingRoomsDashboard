@@ -20,6 +20,7 @@ const BOOKING_WINDOW_DAYS = 14;
 const OFFICE_UTC_OFFSET_MINUTES = 3 * 60;
 const WEEKEND_CLOSED_MESSAGE =
   "Bookings are unavailable on Fridays and Saturdays.";
+const DEFAULT_GOOGLE_CONTACT_GROUP = "Enrollment";
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -171,6 +172,37 @@ function publicBooking(row) {
   };
 }
 
+function parseAttendeeEmails(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text.length > 500) {
+    return { error: "Attendee emails cannot be longer than 500 characters." };
+  }
+  if (!text) return { emails: [], value: "" };
+  const candidates = text
+    .split(/[,;\n]+/)
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean);
+  const emails = [...new Set(candidates)];
+  if (emails.length > 30) {
+    return { error: "Select no more than 30 attendees." };
+  }
+  const invalid = emails.find(
+    email =>
+      email.length > 120 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  );
+  if (invalid) {
+    return {
+      error:
+        "Enter complete attendee email addresses, separated by commas."
+    };
+  }
+  return {
+    emails,
+    value: emails.join(", ")
+  };
+}
+
 async function validateBooking(
   input,
   store,
@@ -184,8 +216,7 @@ async function validateBooking(
     typeof data.organizerGroup === "string"
       ? data.organizerGroup.trim()
       : "";
-  const attendees =
-    typeof data.attendees === "string" ? data.attendees.trim() : "";
+  const attendeeResult = parseAttendeeEmails(data.attendees);
   const title = typeof data.title === "string" ? data.title.trim() : "";
   const email =
     typeof data.email === "string" ? data.email.trim() : fallbackEmail;
@@ -205,12 +236,7 @@ async function validateBooking(
       error: "Select whether this booking is for PLAYBOOK, O&H, or both."
     };
   }
-  if (!attendees || attendees.length > 500) {
-    return {
-      error:
-        "Enter the attendee names or email addresses (or enter Solo), up to 500 characters."
-    };
-  }
+  if (attendeeResult.error) return { error: attendeeResult.error };
   if (!title || title.length > 100) {
     return {
       error:
@@ -287,7 +313,8 @@ async function validateBooking(
     value: {
       name,
       organizerGroup,
-      attendees,
+      attendees: attendeeResult.value,
+      attendeeEmails: attendeeResult.emails,
       title,
       email,
       notes,
@@ -537,6 +564,150 @@ async function authenticatedGoogleUser(
   return identity;
 }
 
+async function googleJSON(url, providerToken, fetchImpl, context) {
+  const response = await fetchImpl(url, {
+    headers: {
+      Authorization: `Bearer ${providerToken}`,
+      Accept: "application/json"
+    }
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+  if (!response.ok) {
+    const providerMessage =
+      typeof payload?.error?.message === "string"
+        ? payload.error.message
+        : "";
+    const error = new Error(
+      response.status === 401
+        ? "Google Contacts access expired. Connect Google Contacts again."
+        : providerMessage || `Google could not ${context}.`
+    );
+    error.status = response.status === 401 ? 401 : 502;
+    throw error;
+  }
+  return payload;
+}
+
+async function loadGoogleContactGroup(
+  providerToken,
+  signedInUser,
+  {
+    fetchImpl = fetch,
+    groupName = DEFAULT_GOOGLE_CONTACT_GROUP
+  } = {}
+) {
+  if (
+    typeof providerToken !== "string" ||
+    providerToken.length < 20 ||
+    providerToken.length > 4096
+  ) {
+    throw Object.assign(
+      new Error("Connect Google Contacts before importing Enrollment."),
+      { status: 400 }
+    );
+  }
+
+  const profile = await googleJSON(
+    "https://openidconnect.googleapis.com/v1/userinfo",
+    providerToken,
+    fetchImpl,
+    "verify the Google account"
+  );
+  if (
+    typeof profile.email !== "string" ||
+    profile.email.trim().toLowerCase() !== signedInUser.email
+  ) {
+    throw Object.assign(
+      new Error("Google Contacts must use the same signed-in account."),
+      { status: 403 }
+    );
+  }
+
+  const groupsURL = new URL(
+    "https://people.googleapis.com/v1/contactGroups"
+  );
+  groupsURL.searchParams.set("pageSize", "1000");
+  groupsURL.searchParams.set("groupFields", "name,memberCount");
+  const groups = await googleJSON(
+    groupsURL,
+    providerToken,
+    fetchImpl,
+    "load contact labels"
+  );
+  const group = (groups.contactGroups || []).find(
+    item =>
+      typeof item?.name === "string" &&
+      item.name.trim().toLowerCase() === groupName.toLowerCase()
+  );
+  if (!group || !/^contactGroups\/[^/]+$/.test(group.resourceName || "")) {
+    throw Object.assign(
+      new Error(`Google Contacts label “${groupName}” was not found.`),
+      { status: 404 }
+    );
+  }
+
+  const groupURL = new URL(
+    `https://people.googleapis.com/v1/${group.resourceName}`
+  );
+  groupURL.searchParams.set("maxMembers", "1000");
+  const populatedGroup = await googleJSON(
+    groupURL,
+    providerToken,
+    fetchImpl,
+    `load the ${groupName} label`
+  );
+  const resourceNames = Array.isArray(populatedGroup.memberResourceNames)
+    ? populatedGroup.memberResourceNames.slice(0, 200)
+    : [];
+  if (!resourceNames.length) return [];
+
+  const peopleURL = new URL(
+    "https://people.googleapis.com/v1/people:batchGet"
+  );
+  peopleURL.searchParams.set("personFields", "names,emailAddresses");
+  for (const resourceName of resourceNames) {
+    peopleURL.searchParams.append("resourceNames", resourceName);
+  }
+  const people = await googleJSON(
+    peopleURL,
+    providerToken,
+    fetchImpl,
+    `load ${groupName} contacts`
+  );
+  const contacts = [];
+  for (const response of people.responses || []) {
+    const person = response?.person || {};
+    const preferredEmail = (person.emailAddresses || []).find(
+      item => item?.metadata?.primary
+    ) || person.emailAddresses?.[0];
+    const email =
+      typeof preferredEmail?.value === "string"
+        ? preferredEmail.value.trim().toLowerCase()
+        : "";
+    if (
+      !email ||
+      email === signedInUser.email ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    ) {
+      continue;
+    }
+    const name =
+      typeof person.names?.[0]?.displayName === "string"
+        ? person.names[0].displayName.trim().slice(0, 120)
+        : "";
+    contacts.push({ name, email });
+  }
+  return [...new Map(contacts.map(contact => [contact.email, contact])).values()]
+    .sort((left, right) =>
+      (left.name || left.email).localeCompare(right.name || right.email)
+    );
+}
+
 function applySecurityHeaders(res, realtimeConfig = { enabled: false }) {
   const connectSources = ["'self'"];
   if (realtimeConfig.enabled) {
@@ -563,13 +734,18 @@ function createRequestHandler({
   root = ROOT,
   apiOnly = false,
   environment = process.env,
-  authenticateRequest
+  authenticateRequest,
+  googleContactsLoader
 }) {
   if (!store) throw new Error("A booking store is required.");
   const realtimeConfig = realtimeBrowserConfig(environment);
   const verifyAccessToken =
     authenticateRequest || createAuthenticationVerifier(environment);
   const approvedDomains = allowedGoogleDomains(environment);
+  const importGoogleContacts =
+    googleContactsLoader ||
+    ((providerToken, signedInUser) =>
+      loadGoogleContactGroup(providerToken, signedInUser));
 
   return async function requestHandler(req, res) {
     applySecurityHeaders(res, realtimeConfig);
@@ -608,6 +784,35 @@ function createRequestHandler({
       const signedInUser = pathname.startsWith("/api/")
         ? await authenticatedGoogleUser(req, verifyAccessToken, approvedDomains)
         : null;
+
+      if (pathname === "/api/attendees" && req.method === "GET") {
+        const contacts = await store.listAttendeeDirectory();
+        return sendJSON(res, 200, { contacts });
+      }
+
+      if (
+        pathname === "/api/attendees/import-google" &&
+        req.method === "POST"
+      ) {
+        const input = await readJSON(req);
+        const providerToken =
+          typeof input.providerToken === "string"
+            ? input.providerToken
+            : "";
+        const contacts = await importGoogleContacts(
+          providerToken,
+          signedInUser
+        );
+        await store.importAttendeeDirectory(
+          contacts,
+          now().toISOString()
+        );
+        return sendJSON(res, 200, {
+          contacts,
+          imported: contacts.length,
+          group: DEFAULT_GOOGLE_CONTACT_GROUP
+        });
+      }
 
       if (pathname === "/api/rooms" && req.method === "GET") {
         const rows = await store.listRooms();
@@ -670,6 +875,14 @@ function createRequestHandler({
         }
         const row = await store.findBookingByTokenHash(tokenHash);
         if (!row) throw new Error("The created booking could not be loaded.");
+        try {
+          await store.rememberAttendeeEmails(
+            value.attendeeEmails,
+            timestamp.toISOString()
+          );
+        } catch (error) {
+          console.error("Could not remember attendee suggestions.", error);
+        }
         return sendJSON(res, 201, {
           token,
           booking: publicBooking(row)
@@ -726,6 +939,14 @@ function createRequestHandler({
           const known = databaseError(error, value.roomConfiguration);
           if (known) return sendError(res, known.status, known.message);
           throw error;
+        }
+        try {
+          await store.rememberAttendeeEmails(
+            value.attendeeEmails,
+            timestamp.toISOString()
+          );
+        } catch (error) {
+          console.error("Could not remember attendee suggestions.", error);
         }
         const row = await store.findBookingByTokenHash(tokenHash);
         return sendJSON(res, 200, { booking: publicBooking(row) });
@@ -806,7 +1027,8 @@ function createApp(options = {}) {
     now: options.now,
     root: options.root || ROOT,
     environment: options.environment,
-    authenticateRequest: options.authenticateRequest
+    authenticateRequest: options.authenticateRequest,
+    googleContactsLoader: options.googleContactsLoader
   });
   return {
     server: http.createServer(handler),
@@ -847,6 +1069,8 @@ module.exports = {
   bearerToken,
   googleIdentity,
   authenticatedGoogleUser,
+  parseAttendeeEmails,
+  loadGoogleContactGroup,
   constants: {
     OPEN_HOUR,
     CLOSE_HOUR,
