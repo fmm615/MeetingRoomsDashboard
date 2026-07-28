@@ -12,6 +12,19 @@ const {
 } = require("../lib/supabase-store");
 
 const FIXED_NOW = new Date("2026-07-27T08:00:00+03:00");
+const TEST_ACCESS_TOKEN = "test-google-access-token";
+const TEST_ENVIRONMENT = {
+  SUPABASE_URL: "https://project-ref.supabase.co",
+  SUPABASE_SECRET_KEY: "server-secret",
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_browser-safe"
+};
+const TEST_GOOGLE_USER = {
+  id: "google-user-1",
+  email: "mahmood@playbook.test",
+  email_confirmed_at: "2026-07-01T08:00:00.000Z",
+  app_metadata: { provider: "google", providers: ["google"] },
+  user_metadata: { full_name: "Mahmood" }
+};
 const BASE_BOOKING = {
   date: "2026-07-28",
   room: "boardroom",
@@ -232,10 +245,16 @@ class MemoryStore {
 
 async function fixture(options = {}) {
   const store = options.store || new MemoryStore();
+  const authUser = options.authUser || TEST_GOOGLE_USER;
+  const authenticateRequest =
+    options.authenticateRequest ||
+    (async token => (token === TEST_ACCESS_TOKEN ? authUser : null));
   const { server } = createApp({
     store,
     now: () => new Date(FIXED_NOW),
-    ...options
+    ...options,
+    environment: options.environment || TEST_ENVIRONMENT,
+    authenticateRequest
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -244,13 +263,21 @@ async function fixture(options = {}) {
   const origin = `http://127.0.0.1:${server.address().port}`;
 
   async function request(requestPath, requestOptions = {}) {
+    const {
+      authenticated = true,
+      headers = {},
+      ...fetchOptions
+    } = requestOptions;
     const response = await fetch(`${origin}${requestPath}`, {
-      ...requestOptions,
+      ...fetchOptions,
       headers: {
-        ...(requestOptions.body
+        ...(fetchOptions.body
           ? { "Content-Type": "application/json" }
           : {}),
-        ...requestOptions.headers
+        ...(authenticated
+          ? { Authorization: `Bearer ${TEST_ACCESS_TOKEN}` }
+          : {}),
+        ...headers
       }
     });
     const contentType = response.headers.get("content-type") || "";
@@ -331,13 +358,11 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
   }
 
   const invalidCases = [
-    [{ name: " " }, /booked-by name/i],
     [{ organizerGroup: "" }, /PLAYBOOK, O&H, or both/i],
     [{ organizerGroup: "Another team" }, /PLAYBOOK, O&H, or both/i],
     [{ attendees: "" }, /attendee names/i],
     [{ attendees: "x".repeat(501) }, /500 characters/i],
     [{ title: "" }, /meeting title/i],
-    [{ email: "not-an-email" }, /valid organizer email/i],
     [{ date: "2026-07-26" }, /between/i],
     [{ date: "2026-08-11" }, /between/i],
     [{ date: "2026-02-30" }, /valid booking date/i],
@@ -482,7 +507,7 @@ test("private tokens protect edits, preserve email, and cancellation frees avail
   assert.equal(updated.body.booking.durationMinutes, 45);
   assert.equal(updated.body.booking.organizerGroup, "PLAYBOOK");
   assert.equal(updated.body.booking.attendees, "Sara, Ahmed");
-  assert.equal(updated.body.booking.email, "legacy@example.com");
+  assert.equal(updated.body.booking.email, TEST_GOOGLE_USER.email);
 
   const privateAvailability = await app.request(
     `/api/availability?date=2026-07-29&room=quiet-pods&token=${token}`
@@ -643,6 +668,81 @@ test("Postgres migration enforces conflicts, workweek rules, and server-only acc
   assert.match(startIntervalUpgrade, /START_TIME_INTERVAL/);
   assert.match(startIntervalUpgrade, /mod\(new\.start_slot,\s*2\)/i);
   assert.doesNotMatch(startIntervalUpgrade, /alter table[\s\S]*add constraint/i);
+});
+
+test("Google authentication protects booking APIs and supplies owner identity", async t => {
+  const app = await fixture();
+  t.after(app.close);
+
+  const authConfig = await app.request("/api/auth-config", {
+    authenticated: false
+  });
+  assert.equal(authConfig.response.status, 200);
+  assert.deepEqual(authConfig.body, {
+    enabled: true,
+    url: TEST_ENVIRONMENT.SUPABASE_URL,
+    publishableKey: TEST_ENVIRONMENT.SUPABASE_PUBLISHABLE_KEY
+  });
+  assert.doesNotMatch(JSON.stringify(authConfig.body), /server-secret/);
+
+  const anonymous = await app.request("/api/rooms", {
+    authenticated: false
+  });
+  assert.equal(anonymous.response.status, 401);
+  assert.match(anonymous.body.error, /sign in with Google/i);
+
+  const expired = await app.request("/api/rooms", {
+    headers: { Authorization: "Bearer expired-token" }
+  });
+  assert.equal(expired.response.status, 401);
+  assert.match(expired.body.error, /expired/i);
+
+  const created = await createBooking(app, {
+    ...BASE_BOOKING,
+    name: "Impersonated name",
+    email: "another-person@example.com"
+  });
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.booking.bookedBy, TEST_GOOGLE_USER.user_metadata.full_name);
+  assert.equal(created.body.booking.email, TEST_GOOGLE_USER.email);
+});
+
+test("Google authentication rejects non-Google and unapproved-domain users", async t => {
+  const passwordApp = await fixture({
+    authUser: {
+      ...TEST_GOOGLE_USER,
+      app_metadata: { provider: "email", providers: ["email"] }
+    }
+  });
+  t.after(passwordApp.close);
+  const passwordResult = await passwordApp.request("/api/rooms");
+  assert.equal(passwordResult.response.status, 403);
+  assert.match(passwordResult.body.error, /Google account/i);
+
+  const domainApp = await fixture({
+    environment: {
+      ...TEST_ENVIRONMENT,
+      GOOGLE_ALLOWED_DOMAINS: "playbook.example,oh.example"
+    },
+    authUser: {
+      ...TEST_GOOGLE_USER,
+      email: "mahmood@outside.example"
+    }
+  });
+  t.after(domainApp.close);
+  const domainResult = await domainApp.request("/api/rooms");
+  assert.equal(domainResult.response.status, 403);
+  assert.match(domainResult.body.error, /approved company Google account/i);
+
+  const approvedApp = await fixture({
+    environment: {
+      ...TEST_ENVIRONMENT,
+      GOOGLE_ALLOWED_DOMAINS: "playbook.test"
+    }
+  });
+  t.after(approvedApp.close);
+  const approvedResult = await approvedApp.request("/api/rooms");
+  assert.equal(approvedResult.response.status, 200);
 });
 
 test("Realtime exposes only browser-safe configuration and CSP origins", async t => {

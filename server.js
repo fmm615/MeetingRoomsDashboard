@@ -4,7 +4,10 @@ const http = require("node:http");
 const path = require("node:path");
 const fs = require("node:fs");
 const { randomBytes, createHash } = require("node:crypto");
-const { createSupabaseStoreFromEnv } = require("./lib/supabase-store");
+const {
+  createSupabaseClientFromEnv,
+  createSupabaseStoreFromEnv
+} = require("./lib/supabase-store");
 
 const ROOT = __dirname;
 const OPEN_HOUR = 8;
@@ -438,6 +441,102 @@ function realtimeBrowserConfig(environment = process.env) {
   }
 }
 
+function allowedGoogleDomains(environment = process.env) {
+  return String(environment.GOOGLE_ALLOWED_DOMAINS || "")
+    .split(",")
+    .map(domain => domain.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function bearerToken(req) {
+  const authorization = String(req.headers.authorization || "");
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || "";
+}
+
+function googleIdentity(user) {
+  const metadata =
+    user?.user_metadata &&
+    typeof user.user_metadata === "object" &&
+    !Array.isArray(user.user_metadata)
+      ? user.user_metadata
+      : {};
+  const email = typeof user?.email === "string"
+    ? user.email.trim().toLowerCase()
+    : "";
+  const fallbackName = email.split("@")[0] || "Team member";
+  const name = String(
+    metadata.full_name || metadata.name || fallbackName
+  ).trim();
+  return {
+    id: String(user?.id || ""),
+    name: name.slice(0, 80),
+    email
+  };
+}
+
+function createAuthenticationVerifier(environment = process.env) {
+  const client = createSupabaseClientFromEnv(environment);
+  return async accessToken => {
+    const { data, error } = await client.auth.getUser(accessToken);
+    if (error) return null;
+    return data.user || null;
+  };
+}
+
+async function authenticatedGoogleUser(
+  req,
+  authenticateRequest,
+  allowedDomains
+) {
+  const token = bearerToken(req);
+  if (!token) {
+    throw Object.assign(
+      new Error("Sign in with Google to use the booking system."),
+      { status: 401 }
+    );
+  }
+  let user;
+  try {
+    user = await authenticateRequest(token);
+  } catch {
+    user = null;
+  }
+  if (!user) {
+    throw Object.assign(
+      new Error("Your sign-in session has expired. Sign in again."),
+      { status: 401 }
+    );
+  }
+  const providers = Array.isArray(user.app_metadata?.providers)
+    ? user.app_metadata.providers
+    : [];
+  if (
+    user.app_metadata?.provider !== "google" &&
+    !providers.includes("google")
+  ) {
+    throw Object.assign(
+      new Error("Use a Google account to access the booking system."),
+      { status: 403 }
+    );
+  }
+  const identity = googleIdentity(user);
+  if (!identity.id || !identity.email || !user.email_confirmed_at) {
+    throw Object.assign(
+      new Error("A verified Google email address is required."),
+      { status: 403 }
+    );
+  }
+  const domain = identity.email.split("@")[1] || "";
+  if (allowedDomains.length && !allowedDomains.includes(domain)) {
+    throw Object.assign(
+      new Error("Use an approved company Google account."),
+      { status: 403 }
+    );
+  }
+  return identity;
+}
+
 function applySecurityHeaders(res, realtimeConfig = { enabled: false }) {
   const connectSources = ["'self'"];
   if (realtimeConfig.enabled) {
@@ -463,10 +562,14 @@ function createRequestHandler({
   now = () => new Date(),
   root = ROOT,
   apiOnly = false,
-  environment = process.env
+  environment = process.env,
+  authenticateRequest
 }) {
   if (!store) throw new Error("A booking store is required.");
   const realtimeConfig = realtimeBrowserConfig(environment);
+  const verifyAccessToken =
+    authenticateRequest || createAuthenticationVerifier(environment);
+  const approvedDomains = allowedGoogleDomains(environment);
 
   return async function requestHandler(req, res) {
     applySecurityHeaders(res, realtimeConfig);
@@ -474,6 +577,20 @@ function createRequestHandler({
     const pathname = routedPathname(url);
 
     try {
+      if (pathname === "/api/auth-config" && req.method === "GET") {
+        return sendJSON(
+          res,
+          200,
+          realtimeConfig.enabled
+            ? {
+                enabled: true,
+                url: realtimeConfig.url,
+                publishableKey: realtimeConfig.publishableKey
+              }
+            : { enabled: false }
+        );
+      }
+
       if (pathname === "/api/realtime-config" && req.method === "GET") {
         return sendJSON(
           res,
@@ -487,6 +604,10 @@ function createRequestHandler({
             : { enabled: false }
         );
       }
+
+      const signedInUser = pathname.startsWith("/api/")
+        ? await authenticatedGoogleUser(req, verifyAccessToken, approvedDomains)
+        : null;
 
       if (pathname === "/api/rooms" && req.method === "GET") {
         const rows = await store.listRooms();
@@ -523,8 +644,13 @@ function createRequestHandler({
 
       if (pathname === "/api/bookings" && req.method === "POST") {
         const input = await readJSON(req);
+        const signedInput = {
+          ...input,
+          name: signedInUser.name,
+          email: signedInUser.email
+        };
         const timestamp = now();
-        const checked = await validateBooking(input, store, timestamp);
+        const checked = await validateBooking(signedInput, store, timestamp);
         if (checked.error) return sendError(res, 400, checked.error);
         const value = checked.value;
         const token = randomBytes(24).toString("hex");
@@ -581,7 +707,12 @@ function createRequestHandler({
             "Past bookings can no longer be edited."
           );
         }
-        const checked = await validateBooking(input, store, timestamp, {
+        const protectedInput = {
+          ...input,
+          name: existing.name,
+          email: existing.email
+        };
+        const checked = await validateBooking(protectedInput, store, timestamp, {
           fallbackEmail: existing.email
         });
         if (checked.error) return sendError(res, 400, checked.error);
@@ -674,7 +805,8 @@ function createApp(options = {}) {
     store,
     now: options.now,
     root: options.root || ROOT,
-    environment: options.environment
+    environment: options.environment,
+    authenticateRequest: options.authenticateRequest
   });
   return {
     server: http.createServer(handler),
@@ -711,6 +843,10 @@ module.exports = {
   durationOptions,
   databaseError,
   realtimeBrowserConfig,
+  allowedGoogleDomains,
+  bearerToken,
+  googleIdentity,
+  authenticatedGoogleUser,
   constants: {
     OPEN_HOUR,
     CLOSE_HOUR,

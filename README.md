@@ -1,6 +1,6 @@
 # Playbook Meeting Rooms MVP
 
-A no-login meeting-room booking application with a Playbook-branded interface, private management links, and Supabase-backed conflict protection.
+A Google-authenticated meeting-room booking application with a Playbook-branded interface, private management links, and Supabase-backed conflict protection.
 
 ## Requirements
 
@@ -36,6 +36,62 @@ privacy-safe Realtime invalidation events for bookings and room blocks.
 The publishable key is intentionally browser-safe. Never expose the Supabase
 secret key to browser code.
 
+## Google login setup for local testing
+
+This milestone requests only the basic Google identity scopes (`openid`,
+email, and profile). It does not request Google Calendar access yet.
+
+### 1. Create the Google OAuth client
+
+In the Google Cloud Console:
+
+1. Open Google Auth Platform for the company project.
+2. Configure Branding and Audience. Use the internal audience when the
+   organization uses Google Workspace; otherwise add the intended testers.
+3. Under Data Access, include `openid`, `userinfo.email`, and
+   `userinfo.profile`.
+4. Create a client with application type **Web application**.
+5. Add this Authorized JavaScript origin:
+
+   ```text
+   http://127.0.0.1:8080
+   ```
+
+6. Add the Supabase callback shown on the Google provider page as an
+   Authorized redirect URI. For the current project it is:
+
+   ```text
+   https://hubidhirgdjociudtjcz.supabase.co/auth/v1/callback
+   ```
+
+7. Copy the generated Client ID and Client Secret.
+
+### 2. Enable Google in Supabase
+
+In Supabase Dashboard:
+
+1. Open **Authentication → Sign In / Providers → Google**.
+2. Enable Google, paste the Client ID and Client Secret, and save.
+3. Open **Authentication → URL Configuration**.
+4. Add this Redirect URL:
+
+   ```text
+   http://127.0.0.1:8080/**
+   ```
+
+### 3. Restrict company domains (optional for the first test)
+
+To reject Google accounts outside approved company domains, add a
+comma-separated list to `.env`:
+
+```bash
+GOOGLE_ALLOWED_DOMAINS=playbook.example,oh.example
+```
+
+When this variable is absent, any verified Google account can sign in. The API
+still verifies the Supabase session and requires Google as the identity
+provider.
+
 ## Run locally
 
 ```bash
@@ -43,6 +99,13 @@ npm start
 ```
 
 Open [http://127.0.0.1:8080/book](http://127.0.0.1:8080/book).
+
+The first page is now a Google sign-in gate. After successful login:
+
+- the header shows the signed-in account and a sign-out button;
+- the booking owner name and organizer email come from Google and are read-only;
+- every booking API request includes the Supabase access token;
+- the server verifies that token with Supabase before reading or changing data.
 
 `npm start` creates the browser bundle with esbuild and starts the Node server. Supabase is the only runtime database.
 
@@ -54,8 +117,9 @@ Open [http://127.0.0.1:8080/book](http://127.0.0.1:8080/book).
 - Bahrain workweek rules: Friday and Saturday are visibly unavailable and rejected by both the API and database
 - Framer Motion page, card, date, slot, drawer, error, loading, and confirmation transitions
 - Reduced-motion support
-- Required booking team (PLAYBOOK, O&H, or joint), booked-by name, attendee list, and meeting title or purpose
-- Optional organizer email and notes
+- Google sign-in with server-verified Supabase sessions
+- Google-supplied booking owner name and organizer email
+- Required booking team (PLAYBOOK, O&H, or joint), attendee list, and meeting title or purpose; optional notes
 - Server-side room, date, past-time, office-hours, and duration validation
 - Atomic Postgres exclusion constraints preventing confirmed room/time overlaps
 - Postgres triggers protecting weekends, room blocks, active-room rules, and durations
@@ -79,7 +143,7 @@ Room duration rules:
 - Innovation Hub: 15-minute increments, up to 120 minutes
 - Quiet Pods: 30 or 45 minutes
 
-Profiles, user accounts, roles, team management, password reset, and account settings are intentionally excluded from this MVP.
+Profiles, roles, team management, password reset, calendar sync, and account settings are intentionally excluded from this milestone.
 
 ## Recommended internal process
 
@@ -92,8 +156,8 @@ Use one shared calendar process:
 
 1. Choose a Sunday–Thursday date, an available room, a start time, and a
    duration.
-2. Record PLAYBOOK, O&H, or a joint booking; the owner; optional organizer
-   email; meeting title; attendees (or `Solo`); and optional notes.
+2. Record PLAYBOOK, O&H, or a joint booking; the meeting title; attendees (or
+   `Solo`); and optional notes. Google supplies the owner name and email.
 3. Keep the booking reference and send the private management link to the
    meeting owner.
 4. Use that link for all edits and cancellations. The original slot is released
@@ -111,11 +175,14 @@ refetches the protected availability API.
 - `/` or `/book` — room availability and booking flow
 - `/book/details` — booking application route
 - `/booking/[token]` — confirmation, editing, and cancellation
+- `/api/auth-config` — browser-safe Supabase Auth URL and publishable key
 - `/api/rooms` — active room catalogue
 - `/api/availability` — non-PII busy intervals
 - `/api/realtime-config` — browser-safe Realtime URL and publishable key
 - `/api/bookings` — create a booking
 - `/api/bookings/[token]` — view, edit, or cancel via private token
+
+Except for the two browser-safe configuration routes, all API routes require a valid Google-authenticated Supabase access token.
 
 ## Tests
 
@@ -136,12 +203,14 @@ npm run test:motion
 
 ## Deployment
 
-The included `api/index.js` and `vercel.json` support Vercel deployment.
+Deployment is intentionally deferred until Google login has been tested
+locally. The existing `api/index.js` and `vercel.json` remain available for the
+later Vercel step.
 
 - Apply all Supabase migrations in filename order before deployment.
-- Configure `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `SUPABASE_PUBLISHABLE_KEY`.
+- Configure `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`,
+  and optional `GOOGLE_ALLOWED_DOMAINS`.
 - Serve the application over HTTPS.
 - Restrict access to the intended office or team.
 - Set `PORT` and `HOST` only for local or self-hosted operation.
 
-The private management link is the booking credential. Anyone who receives it can edit or cancel that booking.

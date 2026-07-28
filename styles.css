@@ -15,10 +15,10 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
-button, input, textarea { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 #app { min-height: 100vh; }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 3px solid #b9a7d0;
   outline-offset: 2px;
 }
@@ -37,7 +37,32 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .brand span { height: 24px; width: 1px; background: var(--border); }
 .brand strong { font-size: 14px; }
 .topbar-date { color: var(--muted); font-size: 13px; }
+.topbar-right, .topbar-account { display: flex; align-items: center; }
+.topbar-right { gap: 20px; }
+.topbar-account { gap: 9px; padding-left: 18px; border-left: 1px solid var(--border); }
+.account-avatar { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--purple-soft); color: var(--purple); font-size: 11px; font-weight: 700; }
+.account-copy { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.account-copy strong { max-width: 155px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.account-copy small { max-width: 155px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9px; }
+.sign-out-button { min-height: 34px; border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; background: #fff; color: var(--purple); font-size: 10px; font-weight: 700; }
+.sign-out-button:disabled { cursor: wait; opacity: .6; }
 main { width: 100%; max-width: 1240px; margin: auto; padding: 42px 28px 80px; }
+
+.auth-shell { min-height: 100vh; max-width: none; padding: 40px 20px; display: grid; place-items: center; background: linear-gradient(145deg, #f8f7fa 0%, #efebf4 100%); }
+.auth-card { width: min(430px, 100%); padding: 38px; border: 1px solid var(--border); border-radius: 16px; background: #fff; box-shadow: 0 18px 45px rgba(42, 0, 76, .08); text-align: center; }
+.auth-logo { width: 150px; height: 64px; object-fit: cover; object-position: center; margin-bottom: 22px; }
+.auth-card .eyebrow { margin-bottom: 10px; }
+.auth-card h1 { font-size: 28px; margin-bottom: 12px; }
+.auth-description { max-width: 340px; margin: 0 auto 24px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.google-signin-button { width: 100%; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 11px; border: 1px solid #d7d3da; border-radius: 9px; background: #fff; color: #29262b; font-weight: 600; font-size: 13px; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.google-signin-button span { width: 23px; height: 23px; display: grid; place-items: center; border-radius: 50%; background: #f4f1f7; color: #4285f4; font-size: 14px; font-weight: 800; }
+.google-signin-button:hover:not(:disabled) { border-color: #aa9cbc; box-shadow: 0 5px 15px rgba(42, 0, 76, .07); transform: translateY(-1px); }
+.google-signin-button:disabled { cursor: wait; opacity: .65; }
+.auth-status, .auth-error { margin: 16px 0; border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.5; }
+.auth-status { background: #f7f6f8; color: var(--muted); }
+.auth-error { background: #faeff7; color: var(--berry); text-align: left; }
+.auth-privacy { margin: 20px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+
 .hero { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 30px; }
 .eyebrow { color: var(--purple); font-size: 11px; letter-spacing: .12em; font-weight: 700; margin: 0 0 8px; }
 h1 { font-size: 32px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -.02em; }
@@ -170,6 +195,7 @@ h1 { font-size: 32px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -.02em;
 .drawer input, .drawer select, .drawer textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; margin-top: 7px; padding: 11px 12px; outline: none; resize: vertical; background: #fff; color: #1c1b1f; font-weight: 400; transition: border-color .16s cubic-bezier(.22, 1, .36, 1), box-shadow .16s cubic-bezier(.22, 1, .36, 1); }
 .drawer input:focus, .drawer select:focus, .drawer textarea:focus { border-color: var(--purple); box-shadow: 0 0 0 3px var(--purple-soft); }
 .drawer input:disabled, .drawer select:disabled, .drawer textarea:disabled { background: #f5f3f6; color: var(--muted); cursor: not-allowed; }
+.drawer input[readonly] { background: #f7f6f8; color: #4f4b52; cursor: default; }
 .drawer-footer { padding: 16px 24px max(16px, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
 .form-error { color: var(--berry); background: #faeff7; padding: 10px; border-radius: 7px; font-size: 12px; margin-top: 15px; }
 .room-reminder { margin-top: 20px; padding: 13px; background: var(--green-soft); border-left: 3px solid #4f8c7d; border-radius: 7px; color: #3f5d56; font-size: 11px; line-height: 1.5; }
@@ -237,7 +263,13 @@ h1 { font-size: 32px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -.02em;
 @media (max-width: 760px) {
   main { padding: 28px 16px 60px; }
   .topbar { padding: 0 16px; }
-  .topbar-date, .brand span { display: none; }
+  .topbar-date, .brand span, .account-copy { display: none; }
+  .topbar-right { gap: 8px; }
+  .topbar-account { padding-left: 0; border-left: 0; }
+  .brand { gap: 8px; }
+  .brand img { width: 104px; }
+  .auth-shell { padding: 24px 16px; }
+  .auth-card { padding: 30px 24px; }
   .hero { align-items: flex-start; gap: 20px; }
   .office-hours { display: none; }
   h1 { font-size: 27px; }

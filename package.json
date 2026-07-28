@@ -2,7 +2,7 @@
   "name": "playbook-meeting-rooms",
   "version": "1.0.0",
   "private": true,
-  "description": "No-login meeting-room booking MVP with Supabase conflict protection.",
+  "description": "Google-authenticated meeting-room booking MVP with Supabase conflict protection.",
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "typecheck": "tsc --noEmit",

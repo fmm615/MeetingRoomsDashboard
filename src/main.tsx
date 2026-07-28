@@ -1,7 +1,9 @@
 import {
   createClient,
   type RealtimeChannel,
+  type Session,
   type SupabaseClient,
+  type User,
 } from "@supabase/supabase-js";
 import {
   AnimatePresence,
@@ -114,6 +116,12 @@ interface ToastMessage {
 }
 
 interface RealtimeConfig {
+  enabled: boolean;
+  url?: string;
+  publishableKey?: string;
+}
+
+interface AuthConfig {
   enabled: boolean;
   url?: string;
   publishableKey?: string;
@@ -331,11 +339,16 @@ function selectionError(
   return "";
 }
 
+let apiAccessToken = "";
+
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...options,
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(apiAccessToken
+        ? { Authorization: `Bearer ${apiAccessToken}` }
+        : {}),
       ...options.headers,
     },
   });
@@ -353,6 +366,26 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw error;
   }
   return payload as T;
+}
+
+function identityFromUser(user: User | null): { name: string; email: string } {
+  const metadata =
+    user?.user_metadata &&
+    typeof user.user_metadata === "object" &&
+    !Array.isArray(user.user_metadata)
+      ? user.user_metadata
+      : {};
+  const email = user?.email?.trim().toLowerCase() || "";
+  const fallbackName = email.split("@")[0] || "Team member";
+  const name = String(
+    metadata.full_name || metadata.name || fallbackName,
+  ).trim();
+  return { name: name.slice(0, 80), email };
+}
+
+function initials(value: string): string {
+  return value.split(/\s+/).filter(Boolean).slice(0, 2)
+    .map(part => part.charAt(0).toUpperCase()).join("") || "G";
 }
 
 function visibleDates(centerValue: string): Date[] {
@@ -401,7 +434,19 @@ function useIsMobile(): boolean {
   return mobile;
 }
 
-function Header({ onHome }: { onHome: () => void }) {
+interface HeaderProps {
+  identity: { name: string; email: string };
+  signingOut: boolean;
+  onHome: () => void;
+  onSignOut: () => void;
+}
+
+function Header({
+  identity,
+  signingOut,
+  onHome,
+  onSignOut,
+}: HeaderProps) {
   return (
     <header className="topbar">
       <a
@@ -417,15 +462,94 @@ function Header({ onHome }: { onHome: () => void }) {
         <span />
         <strong>Office Rooms</strong>
       </a>
-      <div className="topbar-date" id="current-date">
-        {new Date().toLocaleDateString("en-GB", {
-          weekday: "long",
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-        })}
+      <div className="topbar-right">
+        <div className="topbar-date" id="current-date">
+          {new Date().toLocaleDateString("en-GB", {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })}
+        </div>
+        <div className="topbar-account">
+          <span className="account-avatar" aria-hidden="true">
+            {initials(identity.name)}
+          </span>
+          <span className="account-copy">
+            <strong>{identity.name}</strong>
+            <small>{identity.email}</small>
+          </span>
+          <button
+            className="sign-out-button"
+            type="button"
+            disabled={signingOut}
+            onClick={onSignOut}
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
       </div>
     </header>
+  );
+}
+
+interface AuthScreenProps {
+  status: "loading" | "signedOut" | "error";
+  busy: boolean;
+  message: string;
+  onSignIn: () => void;
+}
+
+function AuthScreen({
+  status,
+  busy,
+  message,
+  onSignIn,
+}: AuthScreenProps) {
+  const loading = status === "loading";
+  return (
+    <main className="auth-shell">
+      <section className="auth-card" aria-busy={loading || busy}>
+        <img
+          className="auth-logo"
+          src="/logoPurpleFontWhiteBG.png"
+          alt="Playbook"
+        />
+        <p className="eyebrow">OFFICE ROOMS</p>
+        <h1>
+          {status === "error"
+            ? "Google sign-in needs setup"
+            : "Sign in to book a room"}
+        </h1>
+        <p className="auth-description">
+          Use your company Google account to view availability and manage
+          meeting-room bookings.
+        </p>
+        {loading ? (
+          <p className="auth-status" role="status">
+            Checking your sign-in…
+          </p>
+        ) : status === "error" ? (
+          <p className="auth-error" role="alert">{message}</p>
+        ) : (
+          <>
+            {message && <p className="auth-error" role="alert">{message}</p>}
+            <button
+              className="google-signin-button"
+              type="button"
+              disabled={busy}
+              onClick={onSignIn}
+            >
+              <span aria-hidden="true">G</span>
+              {busy ? "Opening Google…" : "Continue with Google"}
+            </button>
+          </>
+        )}
+        <p className="auth-privacy">
+          Your verified name and work email will be used as the booking owner.
+        </p>
+      </section>
+    </main>
   );
 }
 
@@ -1294,6 +1418,7 @@ interface DetailsDrawerProps {
   availabilityLoading: boolean;
   availabilityError: string;
   draft: BookingDraft;
+  identityLocked: boolean;
   editing: boolean;
   submitting: boolean;
   formError: string;
@@ -1316,6 +1441,7 @@ function DetailsDrawer({
   availabilityLoading,
   availabilityError,
   draft,
+  identityLocked,
   editing,
   submitting,
   formError,
@@ -1587,25 +1713,30 @@ function DetailsDrawer({
             </label>
             <label>
               Booked by <span>*</span>
+              {identityLocked && <small>From Google</small>}
               <input
                 name="name"
                 required
                 maxLength={80}
                 placeholder="Your full name"
                 value={draft.name}
+                readOnly={identityLocked}
                 onChange={(event) =>
                   onDraft({ ...draft, name: event.target.value })
                 }
               />
             </label>
             <label>
-              Organizer email <small>Optional</small>
+              Organizer email <span>*</span>
+              {identityLocked && <small>From Google</small>}
               <input
                 name="email"
                 type="email"
+                required
                 maxLength={120}
                 placeholder="name@company.com"
                 value={draft.email}
+                readOnly={identityLocked}
                 onChange={(event) =>
                   onDraft({ ...draft, email: event.target.value })
                 }
@@ -2083,6 +2214,13 @@ function App() {
   );
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(true);
+  const [authStatus, setAuthStatus] = useState<
+    "loading" | "signedOut" | "signedIn" | "error"
+  >("loading");
+  const [authClient, setAuthClient] = useState<SupabaseClient | null>(null);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
   const [selection, setSelection] = useState<Selection>({
     date: initialDate,
     room: "",
@@ -2124,6 +2262,58 @@ function App() {
   const pageRef = useRef(page);
   const editingTokenRef = useRef(editingToken);
   const submittingRef = useRef(submitting);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribeAuth: (() => void) | null = null;
+
+    const initialiseAuth = async () => {
+      try {
+        const config = await api<AuthConfig>("/api/auth-config");
+        if (!config.enabled || !config.url || !config.publishableKey) {
+          throw new Error(
+            "Add the Supabase URL and publishable key, then enable the Google provider in Supabase.",
+          );
+        }
+        const client = createClient(config.url, config.publishableKey, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+          },
+        });
+        if (!active) return;
+        setAuthClient(client);
+
+        const syncSession = (session: Session | null) => {
+          if (!active) return;
+          apiAccessToken = session?.access_token || "";
+          setAuthUser(session?.user || null);
+          setAuthStatus(session ? "signedIn" : "signedOut");
+          if (session) setAuthError("");
+        };
+        const { data, error } = await client.auth.getSession();
+        if (error) throw error;
+        const { data: listener } = client.auth.onAuthStateChange(
+          (_event, session) => syncSession(session),
+        );
+        unsubscribeAuth = () => listener.subscription.unsubscribe();
+        syncSession(data.session);
+      } catch (error) {
+        if (!active) return;
+        apiAccessToken = "";
+        setAuthUser(null);
+        setAuthError((error as Error).message);
+        setAuthStatus("error");
+      }
+    };
+
+    void initialiseAuth();
+    return () => {
+      active = false;
+      unsubscribeAuth?.();
+    };
+  }, []);
 
   useEffect(() => {
     selectionRef.current = selection;
@@ -2173,6 +2363,7 @@ function App() {
   );
 
   useEffect(() => {
+    if (authStatus !== "signedIn") return;
     let active = true;
     let realtimeClient: SupabaseClient | null = null;
     let channel: RealtimeChannel | null = null;
@@ -2257,7 +2448,7 @@ function App() {
         void realtimeClient.removeChannel(channel);
       }
     };
-  }, [loadAvailability, showToast]);
+  }, [authStatus, loadAvailability, showToast]);
 
   const loadManagedBooking = useCallback(async (token: string) => {
     setPage("manage");
@@ -2291,11 +2482,12 @@ function App() {
       setManagedError("");
       setManagementToken("");
       setDialog(null);
+      const identity = identityFromUser(authUser);
       setDraft({
-        name: "",
+        name: identity.name,
         organizerGroup: "PLAYBOOK",
         attendees: "",
-        email: "",
+        email: identity.email,
         title: "",
         notes: "",
       });
@@ -2304,10 +2496,11 @@ function App() {
       setCopied(false);
       void loadAvailability(nextDate);
     },
-    [loadAvailability],
+    [authUser, loadAvailability],
   );
 
   useEffect(() => {
+    if (authStatus !== "signedIn") return;
     let active = true;
     const initialise = async () => {
       try {
@@ -2345,7 +2538,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [initialDate, loadAvailability, loadManagedBooking]);
+  }, [authStatus, initialDate, loadAvailability, loadManagedBooking]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -2826,8 +3019,56 @@ function App() {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
+  const signInWithGoogle = async () => {
+    if (!authClient) return;
+    setAuthBusy(true);
+    setAuthError("");
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const { error } = await authClient.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
+    if (error) {
+      setAuthError(error.message);
+      setAuthBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    if (!authClient) return;
+    setAuthBusy(true);
+    const { error } = await authClient.auth.signOut({ scope: "local" });
+    if (error) {
+      showToast(error.message);
+      setAuthBusy(false);
+      return;
+    }
+    apiAccessToken = "";
+    setAuthUser(null);
+    setAuthStatus("signedOut");
+    setAuthBusy(false);
+  };
+
+  if (authStatus !== "signedIn" || !authUser) {
+    return (
+      <AuthScreen
+        status={authStatus === "signedIn" ? "loading" : authStatus}
+        busy={authBusy}
+        message={authError}
+        onSignIn={() => void signInWithGoogle()}
+      />
+    );
+  }
+
   const guidelinesRoom = rooms.find((room) => room.id === guidelinesRoomId);
   const selectedRoom = rooms.find((room) => room.id === selection.room);
+  const signedInIdentity = identityFromUser(authUser);
+  const visibleDraft = editingToken
+    ? draft
+    : {
+        ...draft,
+        ...signedInIdentity,
+      };
 
   return (
     <MotionConfig
@@ -2839,7 +3080,12 @@ function App() {
       reducedMotion="user"
     >
       <div className="app-shell">
-        <Header onHome={() => resetBookingFlow("push")} />
+        <Header
+          identity={signedInIdentity}
+          signingOut={authBusy}
+          onHome={() => resetBookingFlow("push")}
+          onSignOut={() => void signOut()}
+        />
         <main>
           {page !== "booking" && (
             <div id="booking-view" className="hidden" aria-hidden="true" />
@@ -2941,7 +3187,8 @@ function App() {
         busy={busy}
         availabilityLoading={availabilityLoading}
         availabilityError={availabilityError}
-        draft={draft}
+        draft={visibleDraft}
+        identityLocked
         editing={Boolean(editingToken)}
         submitting={submitting}
         formError={formError}
