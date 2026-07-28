@@ -92,6 +92,9 @@ function publicRoom(row) {
     maximumDurationMinutes: row.maximum_duration_minutes,
     allowedDurationsMinutes: arrayValue(row.allowed_durations_minutes),
     capacityLabel: row.capacity_label || "",
+    maximumCapacity: Number.isInteger(row.maximum_capacity)
+      ? row.maximum_capacity
+      : null,
     isActive: Boolean(row.enabled)
   };
 }
@@ -127,6 +130,15 @@ function durationError(room) {
     return "Quiet Pods can only be booked for 30 or 45 minutes.";
   }
   return `${room.name} cannot be booked for the selected duration.`;
+}
+
+function capacityError(room) {
+  const maximum = room?.maximumCapacity;
+  if (!Number.isInteger(maximum)) {
+    return "The selected room cannot hold that many people.";
+  }
+  const attendeeMaximum = Math.max(0, maximum - 1);
+  return `${room.name} allows up to ${maximum} people including the organizer. Select no more than ${attendeeMaximum} ${attendeeMaximum === 1 ? "attendee" : "attendees"}.`;
 }
 
 function slotToTime(slot) {
@@ -275,6 +287,12 @@ async function validateBooking(
     return { error: "Select an active room or workspace." };
   }
   const room = publicRoom(roomRow);
+  if (
+    room.maximumCapacity !== null &&
+    attendeeResult.emails.length + 1 > room.maximumCapacity
+  ) {
+    return { error: capacityError(room) };
+  }
   if (
     !Number.isInteger(start) ||
     !Number.isInteger(end) ||
@@ -428,6 +446,9 @@ function databaseError(error, room) {
   }
   if (message.includes("BOOKING_DURATION")) {
     return { status: 400, message: durationError(room) };
+  }
+  if (message.includes("BOOKING_CAPACITY")) {
+    return { status: 400, message: capacityError(room) };
   }
   if (message.includes("ROOM_INACTIVE")) {
     return {

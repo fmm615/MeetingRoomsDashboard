@@ -28,6 +28,7 @@ const ROOM_CONFIGURATIONS = [
     maximumDurationMinutes: 120,
     allowedDurationsMinutes: null,
     capacityLabel: "2–7 people",
+    maximumCapacity: 7,
     isActive: true
   },
   {
@@ -55,7 +56,8 @@ const ROOM_CONFIGURATIONS = [
     minimumDurationMinutes: 15,
     maximumDurationMinutes: 60,
     allowedDurationsMinutes: [15, 30, 45, 60],
-    capacityLabel: "",
+    capacityLabel: "Up to 2 people",
+    maximumCapacity: 2,
     isActive: true
   },
   {
@@ -86,7 +88,8 @@ const ROOM_CONFIGURATIONS = [
     minimumDurationMinutes: 15,
     maximumDurationMinutes: 120,
     allowedDurationsMinutes: null,
-    capacityLabel: "",
+    capacityLabel: "No fixed limit",
+    maximumCapacity: null,
     isActive: true
   },
   {
@@ -116,6 +119,7 @@ const ROOM_CONFIGURATIONS = [
     maximumDurationMinutes: 45,
     allowedDurationsMinutes: [30, 45],
     capacityLabel: "Up to 3 people",
+    maximumCapacity: 3,
     isActive: true
   }
 ];

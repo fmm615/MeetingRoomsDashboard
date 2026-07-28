@@ -65,6 +65,7 @@ class MemoryStore {
       maximum_duration_minutes: room.maximumDurationMinutes,
       allowed_durations_minutes: room.allowedDurationsMinutes || null,
       capacity_label: room.capacityLabel,
+      maximum_capacity: room.maximumCapacity,
       display_order: index + 1
     }));
     this.bookings = [];
@@ -215,6 +216,16 @@ class MemoryStore {
       )
     ) {
       throw storeFailure("ROOM_BLOCKED");
+    }
+    const attendees = String(value.attendees || "")
+      .split(/[,;\n]+/)
+      .map(email => email.trim())
+      .filter(Boolean);
+    if (
+      room.maximum_capacity !== null &&
+      attendees.length + 1 > room.maximum_capacity
+    ) {
+      throw storeFailure("BOOKING_CAPACITY");
     }
     if (
       this.bookings.some(
@@ -377,6 +388,10 @@ test("serves the four Supabase-backed room configurations and app routes", async
     assert.ok(room.recommendedUses.length);
     assert.ok(room.guidelines.length);
   }
+  assert.deepEqual(
+    result.body.rooms.map(room => room.maximumCapacity),
+    [7, 2, null, 3]
+  );
 
   for (const route of [
     "/",
@@ -407,7 +422,8 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
       start,
       end,
       date,
-      name: `${room}-${date}`
+      name: `${room}-${date}`,
+      attendees: room === "meeting-a" ? "sara@playbook.test" : BASE_BOOKING.attendees
     });
     assert.equal(created.response.status, 201);
   }
@@ -429,7 +445,28 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
     [{ start: 1, end: 3 }, /30-minute intervals/i],
     [{ start: 4, end: 4 }, /between/i],
     [{ date: "2026-07-27", start: 0, end: 1 }, /past/i],
-    [{ room: "quiet-pods", start: 0, end: 1 }, /30 or 45/i]
+    [{ room: "quiet-pods", start: 0, end: 1 }, /30 or 45/i],
+    [
+      {
+        attendees:
+          "a@test.com,b@test.com,c@test.com,d@test.com,e@test.com,f@test.com,g@test.com"
+      },
+      /up to 7 people including the organizer/i
+    ],
+    [
+      {
+        room: "meeting-a",
+        attendees: "a@test.com,b@test.com"
+      },
+      /up to 2 people including the organizer/i
+    ],
+    [
+      {
+        room: "quiet-pods",
+        attendees: "a@test.com,b@test.com,c@test.com"
+      },
+      /up to 3 people including the organizer/i
+    ]
   ];
   for (const [change, expected] of invalidCases) {
     const result = await createBooking(app, {
@@ -453,6 +490,19 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
   });
   assert.equal(solo.response.status, 201);
   assert.equal(solo.body.booking.attendees, "");
+
+  const unlimited = await createBooking(app, {
+    ...BASE_BOOKING,
+    room: "meeting-b",
+    date: "2026-08-05",
+    start: 16,
+    end: 20,
+    attendees: Array.from(
+      { length: 10 },
+      (_, index) => `person${index + 1}@test.com`
+    ).join(",")
+  });
+  assert.equal(unlimited.response.status, 201);
 });
 
 test("overlaps, back-to-back boundaries, and room blocks remain protected", async t => {
@@ -620,7 +670,7 @@ test("availability exposes intervals without booking PII", async t => {
     start: 6,
     end: 9,
     name: "Sara",
-    attendees: "mahmood@playbook.test, ahmed@oh.test",
+    attendees: "ahmed@oh.test",
     title: "Quick planning",
     notes: "Bring notes"
   });
@@ -634,7 +684,7 @@ test("availability exposes intervals without booking PII", async t => {
   ]);
   assert.doesNotMatch(
     JSON.stringify(availability.body),
-    /Sara|mahmood@playbook\.test|ahmed@oh\.test|Quick planning|Bring notes|PB-/
+    /Sara|ahmed@oh\.test|Quick planning|Bring notes|PB-/
   );
 });
 
@@ -760,6 +810,28 @@ test("Postgres migration enforces conflicts, workweek rules, and server-only acc
     /grant select, insert, update[\s\S]*to service_role/i
   );
   assert.match(attendeeUpgrade, /source in \('google', 'manual'\)/i);
+
+  const capacityUpgrade = fs.readFileSync(
+    path.join(
+      __dirname, "..", "supabase", "migrations",
+      "20260728050000_enforce_room_capacity.sql"
+    ),
+    "utf8"
+  );
+  assert.match(capacityUpgrade, /maximum_capacity integer/i);
+  assert.match(capacityUpgrade, /when 'boardroom' then 7/i);
+  assert.match(capacityUpgrade, /when 'meeting-a' then 2/i);
+  assert.match(capacityUpgrade, /when 'meeting-b' then null/i);
+  assert.match(capacityUpgrade, /when 'quiet-pods' then 3/i);
+  assert.match(
+    capacityUpgrade,
+    /attendee_count \+ 1 > configured_capacity/i
+  );
+  assert.match(capacityUpgrade, /BOOKING_CAPACITY/);
+  assert.match(
+    capacityUpgrade,
+    /before insert or update of room_id, attendees/i
+  );
 });
 
 test("Google Contacts loader imports only valid Enrollment members", async () => {

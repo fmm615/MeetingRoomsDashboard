@@ -51,6 +51,7 @@ interface Room {
   name: string;
   location: string;
   capacityLabel: string;
+  maximumCapacity: number | null;
   compactDescription: string;
   purpose: string;
   recommendedUses: string[];
@@ -1447,6 +1448,7 @@ interface AttendeeSelectorProps {
   loading: boolean;
   importing: boolean;
   directoryError: string;
+  maximumCapacity: number | null;
   draft: BookingDraft;
   onDraft: (next: BookingDraft) => void;
   onImport: () => void;
@@ -1457,6 +1459,7 @@ function AttendeeSelector({
   loading,
   importing,
   directoryError,
+  maximumCapacity,
   draft,
   onDraft,
   onImport,
@@ -1474,6 +1477,12 @@ function AttendeeSelector({
     [contacts],
   );
   const normalizedQuery = query.trim().toLowerCase();
+  const attendeeLimit =
+    maximumCapacity === null ? null : Math.max(0, maximumCapacity - 1);
+  const capacityReached =
+    attendeeLimit !== null && selected.length >= attendeeLimit;
+  const remainingAttendees =
+    attendeeLimit === null ? null : Math.max(0, attendeeLimit - selected.length);
   const suggestions = useMemo(
     () =>
       contacts
@@ -1492,6 +1501,10 @@ function AttendeeSelector({
   };
 
   const addEmail = (rawValue: string) => {
+    if (capacityReached) {
+      setInputError("Room capacity reached. Remove an attendee before adding another.");
+      return;
+    }
     const email = rawValue.trim().toLowerCase();
     if (!validAttendeeEmail(email)) {
       setInputError("Enter a complete email address.");
@@ -1552,12 +1565,17 @@ function AttendeeSelector({
             type="email"
             inputMode="email"
             autoComplete="off"
-            placeholder="Search a saved contact or enter an email"
+            placeholder={
+              capacityReached
+                ? "Room capacity reached"
+                : "Search a saved contact or enter an email"
+            }
+            disabled={capacityReached}
             value={query}
             aria-autocomplete="list"
             aria-expanded={focused && suggestions.length > 0}
             aria-controls="attendee-suggestions"
-            aria-describedby="attendee-help"
+            aria-describedby="attendee-help attendee-capacity"
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onChange={(event) => {
@@ -1577,7 +1595,7 @@ function AttendeeSelector({
           <button
             className="attendee-add-button"
             type="button"
-            disabled={!query.trim()}
+            disabled={!query.trim() || capacityReached}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => addEmail(query)}
           >
@@ -1631,6 +1649,21 @@ function AttendeeSelector({
           {importing ? "Importing…" : "Import/refresh Enrollment"}
         </button>
       </div>
+      <p
+        className={`attendee-capacity ${capacityReached ? "reached" : ""}`}
+        id="attendee-capacity"
+        role="status"
+      >
+        {maximumCapacity === null
+          ? "No room-specific capacity limit."
+          : `${selected.length + 1} of ${maximumCapacity} people selected, including the organizer. ${
+              remainingAttendees === 0
+                ? "Capacity reached."
+                : `${remainingAttendees} attendee ${
+                    remainingAttendees === 1 ? "space" : "spaces"
+                  } remaining.`
+            }`}
+      </p>
       {directoryError && (
         <p className="attendee-field-error" role="status">
           {directoryError}
@@ -2000,6 +2033,7 @@ function DetailsDrawer({
               loading={attendeeContactsLoading}
               importing={attendeeImporting}
               directoryError={attendeeDirectoryError}
+              maximumCapacity={room?.maximumCapacity ?? null}
               draft={draft}
               onDraft={onDraft}
               onImport={onImportAttendees}
