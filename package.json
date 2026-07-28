@@ -1,0 +1,35 @@
+{
+  "name": "playbook-meeting-rooms",
+  "version": "1.0.0",
+  "private": true,
+  "description": "No-login meeting-room booking MVP with SQLite conflict protection.",
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "check": "npm run typecheck && npm run lint && npm run build && npm test",
+    "prestart": "npm run build",
+    "start": "node server.js",
+    "test": "node --test",
+    "test:browser": "node scripts/browser-e2e.mjs",
+    "test:motion": "node scripts/motion-e2e.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "framer-motion": "^12.42.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0"
+  }
+}
