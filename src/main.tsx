@@ -1483,8 +1483,7 @@ function AttendeeSelector({
             (!normalizedQuery ||
               contact.email.includes(normalizedQuery) ||
               contact.name.toLowerCase().includes(normalizedQuery)),
-        )
-        .slice(0, 8),
+        ),
     [contacts, normalizedQuery, selectedSet],
   );
 
@@ -1619,7 +1618,9 @@ function AttendeeSelector({
         <p id="attendee-help">
           {loading
             ? "Loading saved contacts…"
-            : "Manual emails are remembered for future bookings."}
+            : contacts.length
+              ? `${contacts.length} saved contacts — search or scroll to see everyone. Manual emails are remembered too.`
+              : "No saved contacts yet. You can enter an email manually."}
         </p>
         <button
           type="button"
