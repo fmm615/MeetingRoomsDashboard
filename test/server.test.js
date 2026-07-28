@@ -18,6 +18,8 @@ const BASE_BOOKING = {
   start: 8,
   end: 12,
   name: "Mahmood",
+  organizerGroup: "PLAYBOOK",
+  attendees: "Sara, Ahmed",
   title: "Product review",
   notes: "Bring the latest plan."
 };
@@ -184,6 +186,8 @@ class MemoryStore {
       start_slot: value.start,
       end_slot: value.end,
       name: value.name,
+      organizer_group: value.organizerGroup,
+      attendees: value.attendees,
       title: value.title,
       email: value.email,
       notes: value.notes,
@@ -207,6 +211,8 @@ class MemoryStore {
       start_slot: value.start,
       end_slot: value.end,
       name: value.name,
+      organizer_group: value.organizerGroup,
+      attendees: value.attendees,
       title: value.title,
       email: value.email,
       notes: value.notes,
@@ -326,7 +332,12 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
 
   const invalidCases = [
     [{ name: " " }, /booked-by name/i],
+    [{ organizerGroup: "" }, /PLAYBOOK, O&H, or both/i],
+    [{ organizerGroup: "Another team" }, /PLAYBOOK, O&H, or both/i],
+    [{ attendees: "" }, /attendee names/i],
+    [{ attendees: "x".repeat(501) }, /500 characters/i],
     [{ title: "" }, /meeting title/i],
+    [{ email: "not-an-email" }, /valid organizer email/i],
     [{ date: "2026-07-26" }, /between/i],
     [{ date: "2026-08-11" }, /between/i],
     [{ date: "2026-02-30" }, /valid booking date/i],
@@ -437,9 +448,13 @@ test("private tokens protect edits, preserve email, and cancellation frees avail
 
   const created = await createBooking(app, {
     ...BASE_BOOKING,
+    organizerGroup: "Joint",
+    attendees: "Mahmood, Sara, Ahmed",
     email: "legacy@example.com"
   });
   assert.equal(created.response.status, 201);
+  assert.equal(created.body.booking.organizerGroup, "Joint");
+  assert.equal(created.body.booking.attendees, "Mahmood, Sara, Ahmed");
   assert.match(created.body.token, /^[a-f0-9]{48}$/);
   assert.match(created.body.booking.reference, /^PB-[A-F0-9]{16}$/);
   assert.equal(
@@ -464,6 +479,8 @@ test("private tokens protect edits, preserve email, and cancellation frees avail
   assert.equal(updated.body.booking.roomName, "Quiet Pods");
   assert.equal(updated.body.booking.date, "2026-07-29");
   assert.equal(updated.body.booking.durationMinutes, 45);
+  assert.equal(updated.body.booking.organizerGroup, "PLAYBOOK");
+  assert.equal(updated.body.booking.attendees, "Sara, Ahmed");
   assert.equal(updated.body.booking.email, "legacy@example.com");
 
   const privateAvailability = await app.request(
@@ -508,6 +525,7 @@ test("availability exposes intervals without booking PII", async t => {
     start: 5,
     end: 8,
     name: "Sara",
+    attendees: "Mahmood, Ahmed",
     title: "Quick planning",
     notes: "Bring notes"
   });
@@ -521,7 +539,7 @@ test("availability exposes intervals without booking PII", async t => {
   ]);
   assert.doesNotMatch(
     JSON.stringify(availability.body),
-    /Sara|Quick planning|Bring notes|PB-/
+    /Sara|Mahmood|Ahmed|Quick planning|Bring notes|PB-/
   );
 });
 
@@ -580,6 +598,18 @@ test("Postgres migration enforces conflicts, workweek rules, and server-only acc
   assert.match(sql, /enable row level security/);
   assert.match(sql, /revoke all[\s\S]*from anon, authenticated/i);
   assert.match(sql, /grant execute[\s\S]*to service_role/i);
+  assert.match(sql, /organizer_group/);
+  assert.match(sql, /attendees/);
+
+  const participantUpgrade = fs.readFileSync(
+    path.join(
+      __dirname, "..", "supabase", "migrations",
+      "20260728010000_add_booking_participants.sql"
+    ),
+    "utf8"
+  );
+  assert.match(participantUpgrade, /drop function if exists public\.create_booking/i);
+  assert.match(participantUpgrade, /bookings_attendees_check/i);
 });
 
 test("Supabase configuration requires server-side credentials and normalizes joins", () => {

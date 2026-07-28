@@ -154,6 +154,8 @@ function publicBooking(row) {
     durationMinutes,
     name: row.name,
     bookedBy: row.name,
+    organizerGroup: row.organizer_group,
+    attendees: row.attendees,
     title: row.title,
     meetingTitle: row.title,
     email: row.email,
@@ -173,6 +175,12 @@ async function validateBooking(
   const data =
     input && typeof input === "object" && !Array.isArray(input) ? input : {};
   const name = typeof data.name === "string" ? data.name.trim() : "";
+  const organizerGroup =
+    typeof data.organizerGroup === "string"
+      ? data.organizerGroup.trim()
+      : "";
+  const attendees =
+    typeof data.attendees === "string" ? data.attendees.trim() : "";
   const title = typeof data.title === "string" ? data.title.trim() : "";
   const email =
     typeof data.email === "string" ? data.email.trim() : fallbackEmail;
@@ -187,6 +195,17 @@ async function validateBooking(
       error: "Enter a booked-by name of 80 characters or fewer."
     };
   }
+  if (!["PLAYBOOK", "O&H", "Joint"].includes(organizerGroup)) {
+    return {
+      error: "Select whether this booking is for PLAYBOOK, O&H, or both."
+    };
+  }
+  if (!attendees || attendees.length > 500) {
+    return {
+      error:
+        "Enter the attendee names or email addresses (or enter Solo), up to 500 characters."
+    };
+  }
   if (!title || title.length > 100) {
     return {
       error:
@@ -195,6 +214,12 @@ async function validateBooking(
   }
   if (email.length > 120) {
     return { error: "The saved email value is too long." };
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return {
+      error:
+        "Enter a valid organizer email address or leave it blank."
+    };
   }
   if (notes.length > 500) {
     return { error: "Notes cannot be longer than 500 characters." };
@@ -250,6 +275,8 @@ async function validateBooking(
   return {
     value: {
       name,
+      organizerGroup,
+      attendees,
       title,
       email,
       notes,

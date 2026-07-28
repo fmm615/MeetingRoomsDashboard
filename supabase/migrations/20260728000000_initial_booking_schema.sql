@@ -35,6 +35,10 @@ create table public.bookings (
   start_slot integer not null check (start_slot >= 0 and start_slot < 40),
   end_slot integer not null check (end_slot > start_slot and end_slot <= 40),
   name text not null check (length(btrim(name)) between 1 and 80),
+  organizer_group text not null
+    check (organizer_group in ('PLAYBOOK', 'O&H', 'Joint')),
+  attendees text not null
+    check (length(btrim(attendees)) between 1 and 500),
   title text not null check (length(btrim(title)) between 1 and 100),
   email text not null default '' check (length(email) <= 120),
   notes text not null default '' check (length(notes) <= 500),
@@ -192,6 +196,8 @@ create or replace function public.create_booking(
   p_start_slot integer,
   p_end_slot integer,
   p_name text,
+  p_organizer_group text,
+  p_attendees text,
   p_title text,
   p_email text,
   p_notes text,
@@ -206,10 +212,11 @@ declare
 begin
   insert into public.bookings (
     token_hash, reference, room_id, booking_date, start_slot, end_slot,
-    name, title, email, notes, status, created_at, updated_at
+    name, organizer_group, attendees, title, email, notes,
+    status, created_at, updated_at
   ) values (
     p_token_hash, p_reference, p_room_id, p_booking_date, p_start_slot,
-    p_end_slot, p_name, p_title, p_email, p_notes, 'confirmed',
+    p_end_slot, p_name, p_organizer_group, p_attendees, p_title, p_email, p_notes, 'confirmed',
     p_timestamp, p_timestamp
   )
   returning id into booking_id;
@@ -224,6 +231,8 @@ create or replace function public.update_booking(
   p_start_slot integer,
   p_end_slot integer,
   p_name text,
+  p_organizer_group text,
+  p_attendees text,
   p_title text,
   p_email text,
   p_notes text,
@@ -240,6 +249,8 @@ begin
          start_slot = p_start_slot,
          end_slot = p_end_slot,
          name = p_name,
+         organizer_group = p_organizer_group,
+         attendees = p_attendees,
          title = p_title,
          email = p_email,
          notes = p_notes,
@@ -351,10 +362,10 @@ revoke all on public.rooms, public.bookings, public.room_blocks
 revoke execute on function public.playbook_lock_key(text, date)
   from public, anon, authenticated;
 revoke execute on function public.create_booking(
-  text, text, text, date, integer, integer, text, text, text, text, timestamptz
+  text, text, text, date, integer, integer, text, text, text, text, text, text, timestamptz
 ) from public, anon, authenticated;
 revoke execute on function public.update_booking(
-  bigint, text, date, integer, integer, text, text, text, text, timestamptz
+  bigint, text, date, integer, integer, text, text, text, text, text, text, timestamptz
 ) from public, anon, authenticated;
 revoke execute on function public.cancel_booking(bigint, timestamptz)
   from public, anon, authenticated;
@@ -365,10 +376,10 @@ grant usage, select on all sequences in schema public to service_role;
 grant execute on function public.playbook_lock_key(text, date)
   to service_role;
 grant execute on function public.create_booking(
-  text, text, text, date, integer, integer, text, text, text, text, timestamptz
+  text, text, text, date, integer, integer, text, text, text, text, text, text, timestamptz
 ) to service_role;
 grant execute on function public.update_booking(
-  bigint, text, date, integer, integer, text, text, text, text, timestamptz
+  bigint, text, date, integer, integer, text, text, text, text, text, text, timestamptz
 ) to service_role;
 grant execute on function public.cancel_booking(bigint, timestamptz)
   to service_role;

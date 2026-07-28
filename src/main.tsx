@@ -54,6 +54,8 @@ interface BusyInterval {
   type: "booked" | "blocked";
 }
 
+type OrganizerGroup = "PLAYBOOK" | "O&H" | "Joint";
+
 interface Booking {
   room: string;
   roomName: string;
@@ -63,6 +65,9 @@ interface Booking {
   end: number;
   durationMinutes: number;
   bookedBy: string;
+  organizerGroup: OrganizerGroup;
+  attendees: string;
+  email: string;
   meetingTitle: string;
   notes: string;
   reference: string;
@@ -78,6 +83,9 @@ interface Selection {
 
 interface BookingDraft {
   name: string;
+  organizerGroup: OrganizerGroup;
+  attendees: string;
+  email: string;
   title: string;
   notes: string;
 }
@@ -129,6 +137,10 @@ function formatDuration(minutes: number): string {
   if (minutes === 60) return "1 hour";
   if (minutes % 60 === 0) return `${minutes / 60} hours`;
   return `${Math.floor(minutes / 60)} hour ${minutes % 60} minutes`;
+}
+
+function organizerGroupLabel(value: OrganizerGroup): string {
+  return value === "Joint" ? "PLAYBOOK & O&H" : value;
 }
 
 function dateBounds(): { minimum: string; maximum: string } {
@@ -1378,6 +1390,8 @@ function DetailsDrawer({
                 </dd>
                 <dt>Duration</dt>
                 <dd>{duration ? formatDuration(duration) : ""}</dd>
+                <dt>Booking team</dt>
+                <dd>{organizerGroupLabel(draft.organizerGroup)}</dd>
                 <dt>Booked by</dt>
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.dd
@@ -1394,6 +1408,8 @@ function DetailsDrawer({
                     {bookedBy}
                   </motion.dd>
                 </AnimatePresence>
+                <dt>Attendees</dt>
+                <dd>{draft.attendees.trim() || "Not entered"}</dd>
               </dl>
             </div>
             {editing && room && (
@@ -1532,6 +1548,24 @@ function DetailsDrawer({
               </fieldset>
             )}
             <label>
+              Booking team <span>*</span>
+              <select
+                name="organizerGroup"
+                required
+                value={draft.organizerGroup}
+                onChange={(event) =>
+                  onDraft({
+                    ...draft,
+                    organizerGroup: event.target.value as OrganizerGroup,
+                  })
+                }
+              >
+                <option value="PLAYBOOK">PLAYBOOK</option>
+                <option value="O&H">O&amp;H</option>
+                <option value="Joint">PLAYBOOK &amp; O&amp;H</option>
+              </select>
+            </label>
+            <label>
               Booked by <span>*</span>
               <input
                 name="name"
@@ -1541,6 +1575,19 @@ function DetailsDrawer({
                 value={draft.name}
                 onChange={(event) =>
                   onDraft({ ...draft, name: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              Organizer email <small>Optional</small>
+              <input
+                name="email"
+                type="email"
+                maxLength={120}
+                placeholder="name@company.com"
+                value={draft.email}
+                onChange={(event) =>
+                  onDraft({ ...draft, email: event.target.value })
                 }
               />
             </label>
@@ -1558,12 +1605,26 @@ function DetailsDrawer({
               />
             </label>
             <label>
+              Attendees <span>*</span>
+              <textarea
+                name="attendees"
+                required
+                maxLength={500}
+                rows={3}
+                placeholder="Names or email addresses; enter Solo if no other attendees"
+                value={draft.attendees}
+                onChange={(event) =>
+                  onDraft({ ...draft, attendees: event.target.value })
+                }
+              />
+            </label>
+            <label>
               Notes <small>Optional</small>
               <textarea
                 name="notes"
                 maxLength={500}
                 rows={4}
-                placeholder="Add anything attendees should know"
+                placeholder="Add an agenda, preparation, or access notes"
                 value={draft.notes}
                 onChange={(event) =>
                   onDraft({ ...draft, notes: event.target.value })
@@ -1803,8 +1864,14 @@ function Confirmation({
           </strong>
         </p>
         <p>Duration: {formatDuration(item.durationMinutes)}</p>
-        <p>Booked by {item.bookedBy}</p>
-        <p>{item.meetingTitle}</p>
+        <p>
+          {organizerGroupLabel(item.organizerGroup)} · Owner: {item.bookedBy}
+        </p>
+        {item.email && <p>Organizer email: {item.email}</p>}
+        <p>
+          <strong>{item.meetingTitle}</strong>
+        </p>
+        <p>Attendees: {item.attendees}</p>
         <div className="reference">
           <span>BOOKING REFERENCE</span>
           <strong>{item.reference}</strong>
@@ -2012,6 +2079,9 @@ function App() {
   const [guidelinesRoomId, setGuidelinesRoomId] = useState("");
   const [draft, setDraft] = useState<BookingDraft>({
     name: "",
+    organizerGroup: "PLAYBOOK",
+    attendees: "",
+    email: "",
     title: "",
     notes: "",
   });
@@ -2108,7 +2178,14 @@ function App() {
       setManagedError("");
       setManagementToken("");
       setDialog(null);
-      setDraft({ name: "", title: "", notes: "" });
+      setDraft({
+        name: "",
+        organizerGroup: "PLAYBOOK",
+        attendees: "",
+        email: "",
+        title: "",
+        notes: "",
+      });
       setFormError("");
       setPage("booking");
       setCopied(false);
@@ -2471,13 +2548,28 @@ function App() {
       start: selection.start,
       end: selection.end,
       name: String(form.get("name") || "").trim(),
+      organizerGroup: String(form.get("organizerGroup") || "").trim(),
+      attendees: String(form.get("attendees") || "").trim(),
+      email: String(form.get("email") || "").trim(),
       title: String(form.get("title") || "").trim(),
       notes: String(form.get("notes") || "").trim(),
     };
-    if (!payload.name || !payload.title) {
+    if (
+      !payload.name ||
+      !payload.organizerGroup ||
+      !payload.attendees ||
+      !payload.title
+    ) {
       showFormError(
-        "Enter who the booking is for and a meeting title or purpose.",
+        "Enter the booking team, owner, attendees, and meeting title or purpose.",
       );
+      return;
+    }
+    if (
+      payload.email &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)
+    ) {
+      showFormError("Enter a valid organizer email address or leave it blank.");
       return;
     }
 
@@ -2567,6 +2659,9 @@ function App() {
     setDateWindowAnchor(item.date);
     setDraft({
       name: item.bookedBy,
+      organizerGroup: item.organizerGroup,
+      attendees: item.attendees,
+      email: item.email || "",
       title: item.meetingTitle,
       notes: item.notes || "",
     });

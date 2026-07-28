@@ -260,9 +260,13 @@ assert.equal(await evaluate("document.querySelector('#room-reminder').textConten
 await evaluate(`
   (() => {
     const form = document.querySelector('#booking-form');
+    form.elements.organizerGroup.value = 'Joint';
+    form.elements.organizerGroup.dispatchEvent(new Event('change', { bubbles: true }));
     form.elements.name.value = 'QA User';
     form.elements.name.dispatchEvent(new Event('input', { bubbles: true }));
+    form.elements.email.value = 'qa@example.com';
     form.elements.title.value = 'End-to-end review';
+    form.elements.attendees.value = 'Mahmood, Sara';
     form.elements.notes.value = 'Automated browser verification';
     form.requestSubmit();
   })()
@@ -277,6 +281,9 @@ assert.equal(await evaluate("document.querySelector('#private-link-input').value
 assert.equal(await evaluate("document.querySelector('.confirmation-details').textContent.includes('Standing Workstations')"), true);
 assert.equal(await evaluate("document.querySelector('.confirmation-details').textContent.includes('Middle Meeting Room')"), true);
 assert.equal(await evaluate("document.querySelector('.confirmation-details').textContent.includes('Duration: 45 minutes')"), true);
+assert.equal(await evaluate("document.querySelector('.confirmation-details').textContent.includes('PLAYBOOK & O&H · Owner: QA User')"), true);
+assert.equal(await evaluate("document.querySelector('.confirmation-details').textContent.includes('qa@example.com')"), true);
+assert.equal(await evaluate("document.querySelector('.confirmation-details').textContent.includes('Attendees: Mahmood, Sara')"), true);
 assert.equal(await evaluate("[...document.querySelectorAll('h1')].filter(heading => heading.offsetParent !== null).length"), 1);
 assert.equal(await evaluate("document.querySelector('#details-drawer').hasAttribute('inert')"), true);
 
@@ -303,6 +310,9 @@ await waitFor(
   evaluate,
 );
 assert.equal(await evaluate("document.querySelector('#booking-form').elements.name.value"), "QA User");
+assert.equal(await evaluate("document.querySelector('#booking-form').elements.organizerGroup.value"), "Joint");
+assert.equal(await evaluate("document.querySelector('#booking-form').elements.email.value"), "qa@example.com");
+assert.equal(await evaluate("document.querySelector('#booking-form').elements.attendees.value"), "Mahmood, Sara");
 assert.equal(await evaluate("document.querySelector('#booking-form').elements.title.value"), "End-to-end review");
 assert.equal(await evaluate("document.querySelector('#booking-form').elements.notes.value"), "Automated browser verification");
 await evaluate(`(() => {

@@ -25,7 +25,11 @@ SUPABASE_SECRET_KEY=your-server-only-secret-key
 
 Legacy projects may use `SUPABASE_SERVICE_ROLE_KEY` instead of `SUPABASE_SECRET_KEY`.
 
-Apply `supabase/migrations/20260728000000_initial_booking_schema.sql` to the Supabase project before starting the app. The migration creates and seeds the room catalogue, bookings, room blocks, database functions, conflict constraints, and server-only permissions.
+Apply the SQL files in `supabase/migrations/` in filename order before starting
+the app. The initial migration creates and seeds the room catalogue, bookings,
+room blocks, database functions, conflict constraints, and server-only
+permissions. The participant migration safely upgrades projects that already
+applied the initial schema.
 
 Never expose either Supabase secret key to browser code.
 
@@ -47,7 +51,8 @@ Open [http://127.0.0.1:8080/book](http://127.0.0.1:8080/book).
 - Bahrain workweek rules: Friday and Saturday are visibly unavailable and rejected by both the API and database
 - Framer Motion page, card, date, slot, drawer, error, loading, and confirmation transitions
 - Reduced-motion support
-- Required booked-by name and meeting title or purpose; optional notes
+- Required booking team (PLAYBOOK, O&H, or joint), booked-by name, attendee list, and meeting title or purpose
+- Optional organizer email and notes
 - Server-side room, date, past-time, office-hours, and duration validation
 - Atomic Postgres exclusion constraints preventing confirmed room/time overlaps
 - Postgres triggers protecting weekends, room blocks, active-room rules, and durations
@@ -55,10 +60,10 @@ Open [http://127.0.0.1:8080/book](http://127.0.0.1:8080/book).
 - 192-bit private edit/cancel token
 - SHA-256 token hashes; raw management tokens are never stored
 - Private management links at `/booking/[token]`
-- Private-link editing of date, start time, duration, name, title, and notes
+- Private-link editing of date, start time, duration, team, owner, email, attendees, title, and notes
 - Past bookings cannot be recycled into future reservations
 - Idempotent cancellation that immediately returns time to availability
-- Availability responses that never expose names, email, notes, references, or tokens
+- Availability responses that never expose names, email, attendees, notes, references, or tokens
 - Responsive and keyboard-accessible drawers
 - Security headers and no-store API responses
 
@@ -70,6 +75,29 @@ Room duration rules:
 - Quiet Pods: 30 or 45 minutes
 
 Profiles, user accounts, roles, team management, password reset, and account settings are intentionally excluded from this MVP.
+
+## Recommended internal process
+
+The reviewed flow had four practical gaps: team ownership was ambiguous,
+attendees were not recorded, the optional organizer email was missing from the
+form, and existing Supabase projects needed a safe schema upgrade. Those gaps
+are covered by this version.
+
+Use one shared calendar process:
+
+1. Choose a Sunday–Thursday date, an available room, a start time, and a
+   duration.
+2. Record PLAYBOOK, O&H, or a joint booking; the owner; optional organizer
+   email; meeting title; attendees (or `Solo`); and optional notes.
+3. Keep the booking reference and send the private management link to the
+   meeting owner.
+4. Use that link for all edits and cancellations. The original slot is released
+   only after a valid change or cancellation succeeds.
+
+Supabase remains the single source of truth. If two people submit the same room
+and time together, the database confirms one and rejects the other with a
+conflict response. Public availability stays limited to busy intervals; owner,
+attendee, email, title, and notes remain behind the private booking link.
 
 ## Routes
 
@@ -102,7 +130,7 @@ npm run test:motion
 
 The included `api/index.js` and `vercel.json` support Vercel deployment.
 
-- Apply the Supabase migration before the first deployment.
+- Apply all Supabase migrations in filename order before deployment.
 - Configure `SUPABASE_URL` and `SUPABASE_SECRET_KEY` as server-only environment variables.
 - Serve the application over HTTPS.
 - Restrict access to the intended office or team.

@@ -545,7 +545,7 @@ try {
   await evaluate("document.querySelector('#booking-form').requestSubmit()");
   await waitFor("required form error", () =>
     evaluate(
-      "document.querySelector('#form-error')?.textContent.includes('Enter who')",
+      "document.querySelector('#form-error')?.textContent.includes('Enter the booking')",
     ),
   );
   const requiredError = await sample("#form-error");
@@ -556,7 +556,7 @@ try {
   await sleep(350);
   assert.equal(
     await evaluate(
-      "document.querySelector('#form-error')?.textContent.includes('Enter who')",
+      "document.querySelector('#form-error')?.textContent.includes('Enter the booking')",
     ),
     true,
     "Important validation error disappeared automatically.",
