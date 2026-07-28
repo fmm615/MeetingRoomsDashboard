@@ -129,6 +129,16 @@ await cdp.send("Page.navigate", { url: `${appOrigin}/book` });
 await waitFor("document.querySelectorAll('.room-card').length === 4 && !document.querySelector('.room-availability')?.textContent.includes('Checking')", evaluate);
 const desktopViewportWidth = await evaluate("innerWidth");
 assert.equal(await evaluate("document.querySelectorAll('.date-card').length"), 5);
+assert.equal(
+  await evaluate("document.querySelectorAll('.date-card.weekend:disabled').length"),
+  2,
+);
+assert.equal(
+  await evaluate(
+    "[...document.querySelectorAll('.date-card.weekend')].every(button => button.textContent.includes('Unavailable') && button.getAttribute('aria-label').includes('weekend unavailable'))",
+  ),
+  true,
+);
 assert.equal(await evaluate("document.querySelector('#details-drawer').hasAttribute('inert')"), true);
 assert.equal(await evaluate("document.querySelector('#guidelines-drawer').hasAttribute('inert')"), true);
 assert.equal(await evaluate("[...document.querySelectorAll('.date-card')].every(button => button.dataset.date <= document.querySelector('#date-input').max)"), true);
@@ -179,6 +189,26 @@ assert.equal(
   await evaluate("document.querySelector('.date-card:last-child').dataset.date"),
   await evaluate("document.querySelector('#date-input').max"),
 );
+const weekendDate = await evaluate(
+  "document.querySelector('.date-card.weekend').dataset.date",
+);
+await evaluate(`(() => {
+  const input = document.querySelector('#date-input');
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value'
+  ).set;
+  valueSetter.call(input, ${JSON.stringify(weekendDate)});
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+await waitFor(
+  "document.querySelector('#toast')?.textContent.includes('Fridays and Saturdays')",
+  evaluate,
+);
+assert.equal(
+  await evaluate("document.querySelector('.date-card.selected').dataset.date"),
+  await evaluate("document.querySelector('#date-input').max"),
+);
 assert.deepEqual(
   await evaluate("[...document.querySelectorAll('.room-card h3')].map(node => node.textContent)"),
   ["Meeting Room", "Standing Workstations", "Innovation Hub", "Quiet Pods"]
@@ -194,8 +224,16 @@ await evaluate("document.querySelector('#done-guidelines').click()");
 await waitFor("document.querySelector('#guidelines-drawer').hasAttribute('inert')", evaluate);
 assert.equal(await evaluate("document.activeElement.matches('[data-guidelines=\"meeting-a\"]')"), true);
 
-await evaluate("document.querySelectorAll('.date-card')[1].click()");
-await waitFor("document.querySelector('.date-card.selected')?.getAttribute('aria-pressed') === 'true'", evaluate);
+const nextDate = await evaluate(
+  "document.querySelector('.date-card:not(:disabled):not(.selected)').dataset.date",
+);
+await evaluate(
+  "document.querySelector('.date-card:not(:disabled):not(.selected)').click()",
+);
+await waitFor(
+  `document.querySelector('.date-card.selected')?.dataset.date === ${JSON.stringify(nextDate)}`,
+  evaluate,
+);
 const selectedDate = await evaluate("document.querySelector('.date-card.selected').dataset.date");
 const rescheduledDateValue = new Date(`${selectedDate}T12:00:00Z`);
 rescheduledDateValue.setUTCDate(rescheduledDateValue.getUTCDate() + 1);

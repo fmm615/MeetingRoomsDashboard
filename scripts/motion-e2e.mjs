@@ -393,7 +393,12 @@ try {
   const indicatorSelector = ".selected-date-indicator";
   assert.equal(await evaluate(`document.querySelectorAll(${JSON.stringify(indicatorSelector)}).length`), 1);
   const initialIndicator = await sample(indicatorSelector);
-  await evaluate("document.querySelectorAll('.date-card')[1].click()");
+  const nextDate = await evaluate(
+    "document.querySelector('.date-card:not(:disabled):not(.selected)').dataset.date",
+  );
+  await evaluate(
+    "document.querySelector('.date-card:not(:disabled):not(.selected)').click()",
+  );
   const dateSamples = [];
   for (const delay of [16, 45, 70, 100]) {
     await sleep(delay);
@@ -401,7 +406,7 @@ try {
   }
   await waitFor("second date selection", () =>
     evaluate(
-      "document.querySelectorAll('.date-card')[1].getAttribute('aria-pressed') === 'true'",
+      `document.querySelector('.date-card.selected')?.dataset.date === ${JSON.stringify(nextDate)}`,
     ),
   );
   const finalIndicator = dateSamples.at(-1);

@@ -73,6 +73,9 @@ h1 { font-size: 32px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -.02em;
 .date-card:hover:not(:disabled) { border-color: #b8a7ce; }
 .date-card.selected { border-color: var(--purple); color: #ddd4e9; }
 .date-card.selected strong { color: #fff; }
+.date-card.weekend:disabled { border-color: #e4e1e6; background: #f5f3f6; color: #8a858d; cursor: not-allowed; opacity: 1; }
+.date-card.weekend:disabled strong { color: #77717a; }
+.date-card-status { display: block; margin-top: 4px; color: #77717a; font-size: 8px; font-weight: 700; letter-spacing: .02em; }
 
 .room-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 20px; }
 .room-card { text-align: left; padding: 17px; border: 1px solid var(--border); background: #fff; border-radius: 10px; position: relative; transition: transform .15s cubic-bezier(.22, 1, .36, 1), border-color .18s cubic-bezier(.22, 1, .36, 1), background-color .18s cubic-bezier(.22, 1, .36, 1), box-shadow .18s cubic-bezier(.22, 1, .36, 1); display: flex; flex-direction: column; min-width: 0; }

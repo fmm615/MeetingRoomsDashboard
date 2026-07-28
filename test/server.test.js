@@ -159,6 +159,15 @@ test("accepts every valid room duration and rejects room-specific invalid durati
   const app = await fixture();
   t.after(app.close);
 
+  const validDates = [
+    "2026-07-30",
+    "2026-08-02",
+    "2026-08-03",
+    "2026-08-04",
+    "2026-08-05",
+    "2026-08-06",
+    "2026-08-09"
+  ];
   const validCases = [
     { room: "boardroom", start: 0, end: 1 },
     { room: "boardroom", start: 2, end: 10 },
@@ -173,7 +182,7 @@ test("accepts every valid room duration and rejects room-specific invalid durati
     const created = await createBooking(app, {
       ...BASE_BOOKING,
       ...item,
-      date: `2026-08-${String(index + 1).padStart(2, "0")}`,
+      date: validDates[index],
       name: `Valid ${index}`
     });
     assert.equal(created.response.status, 201, JSON.stringify(item));
@@ -191,6 +200,67 @@ test("accepts every valid room duration and rejects room-specific invalid durati
     assert.equal(rejected.response.status, 400);
     assert.equal(rejected.body.error, message);
   }
+});
+
+test("Friday and Saturday closure is enforced by the API and database", async t => {
+  const app = await fixture();
+  t.after(app.close);
+  const closedMessage = "Bookings are unavailable on Fridays and Saturdays.";
+
+  for (const date of ["2026-07-31", "2026-08-01"]) {
+    const availability = await app.request(`/api/availability?date=${date}`);
+    assert.equal(availability.response.status, 400);
+    assert.equal(availability.body.error, closedMessage);
+
+    const rejected = await createBooking(app, { ...BASE_BOOKING, date });
+    assert.equal(rejected.response.status, 400);
+    assert.equal(rejected.body.error, closedMessage);
+  }
+
+  const created = await createBooking(app, {
+    ...BASE_BOOKING,
+    date: "2026-07-30"
+  });
+  assert.equal(created.response.status, 201);
+
+  for (const date of ["2026-07-31", "2026-08-01"]) {
+    const rejectedEdit = await app.request(
+      `/api/bookings/${created.body.token}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ ...BASE_BOOKING, date })
+      }
+    );
+    assert.equal(rejectedEdit.response.status, 400);
+    assert.equal(rejectedEdit.body.error, closedMessage);
+  }
+
+  const stored = await app.request(`/api/bookings/${created.body.token}`);
+  assert.equal(stored.body.booking.date, "2026-07-30");
+
+  assert.throws(() => {
+    app.db.prepare(`
+      INSERT INTO bookings (
+        token_hash, reference, room_id, booking_date, start_slot, end_slot,
+        name, title, email, notes, status, created_at, updated_at
+      ) VALUES (?, 'PB-WEEKEND-DIRECT', 'boardroom', '2026-07-31', 0, 1,
+        'Direct', 'Weekend', '', '', 'confirmed', 'now', 'now')
+    `).run(hashToken("c".repeat(48)));
+  }, /WEEKEND_CLOSED/);
+
+  const bookingId = app.db.prepare(
+    "SELECT id FROM bookings WHERE reference = ?"
+  ).get(created.body.booking.reference).id;
+  assert.throws(() => {
+    app.db.prepare(
+      "UPDATE bookings SET booking_date = '2026-08-01' WHERE id = ?"
+    ).run(bookingId);
+  }, /WEEKEND_CLOSED/);
+  assert.equal(
+    app.db.prepare("SELECT booking_date FROM bookings WHERE id = ?").get(bookingId)
+      .booking_date,
+    "2026-07-30"
+  );
 });
 
 test("rejects tampered fields, inactive rooms, past times, and after-hours bookings", async t => {

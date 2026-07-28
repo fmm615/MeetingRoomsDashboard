@@ -14,6 +14,7 @@ const SLOT_MINUTES = 15;
 const TOTAL_SLOTS = ((CLOSE_HOUR - OPEN_HOUR) * 60) / SLOT_MINUTES;
 const BOOKING_WINDOW_DAYS = 14;
 const OFFICE_UTC_OFFSET_MINUTES = 3 * 60;
+const WEEKEND_CLOSED_MESSAGE = "Bookings are unavailable on Fridays and Saturdays.";
 const SCHEMA_VERSION = 1;
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -51,6 +52,11 @@ function isRealISODate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T12:00:00Z`);
   return !Number.isNaN(parsed.getTime()) && localISO(parsed) === value;
+}
+
+function isWeekendDate(value) {
+  const day = new Date(`${value}T12:00:00Z`).getUTCDay();
+  return day === 5 || day === 6;
 }
 
 function bookingStartTime(date, startSlot) {
@@ -361,6 +367,7 @@ function validateBooking(input, db, now = new Date(), { fallbackEmail = "" } = {
   if (date < minimumDate || date > maximumDate) {
     return { error: `Bookings must be between ${minimumDate} and ${maximumDate}.` };
   }
+  if (isWeekendDate(date)) return { error: WEEKEND_CLOSED_MESSAGE };
 
   const roomRow = getRoomRow(db, roomId, true);
   if (!roomRow) return { error: "Select an active room or workspace." };
@@ -448,6 +455,9 @@ function bookingByToken(db, token) {
 
 function databaseError(error, room) {
   const message = String(error?.message || "");
+  if (message.includes("WEEKEND_CLOSED")) {
+    return { status: 400, message: WEEKEND_CLOSED_MESSAGE };
+  }
   if (message.includes("BOOKING_CONFLICT")) {
     return { status: 409, message: "This room is already booked during the selected time. Select another time or room." };
   }
@@ -525,6 +535,7 @@ function createRequestHandler({ db, now = () => new Date(), root = ROOT }) {
         const roomId = url.searchParams.get("room") || "";
         const managementToken = url.searchParams.get("token") || "";
         if (!isRealISODate(date)) return sendError(res, 400, "Select a valid booking date.");
+        if (isWeekendDate(date)) return sendError(res, 400, WEEKEND_CLOSED_MESSAGE);
         if (roomId && !getRoomRow(db, roomId, true)) return sendError(res, 404, "Room or workspace not found.");
         const excludedHash = /^[a-f0-9]{48}$/.test(managementToken) && bookingByToken(db, managementToken)
           ? hashToken(managementToken)

@@ -54,6 +54,22 @@ CREATE INDEX IF NOT EXISTS bookings_availability
 CREATE INDEX IF NOT EXISTS room_blocks_availability
   ON room_blocks (block_date, room_id, active, start_slot, end_slot);
 
+CREATE TRIGGER IF NOT EXISTS bookings_prevent_weekend_insert
+BEFORE INSERT ON bookings
+WHEN NEW.status = 'confirmed'
+  AND strftime('%w', NEW.booking_date) IN ('5', '6')
+BEGIN
+  SELECT RAISE(ABORT, 'WEEKEND_CLOSED');
+END;
+
+CREATE TRIGGER IF NOT EXISTS bookings_prevent_weekend_update
+BEFORE UPDATE OF booking_date, room_id, start_slot, end_slot, status ON bookings
+WHEN NEW.status = 'confirmed'
+  AND strftime('%w', NEW.booking_date) IN ('5', '6')
+BEGIN
+  SELECT RAISE(ABORT, 'WEEKEND_CLOSED');
+END;
+
 CREATE TRIGGER IF NOT EXISTS bookings_require_active_room_insert
 BEFORE INSERT ON bookings
 WHEN NOT EXISTS (SELECT 1 FROM rooms WHERE id = NEW.room_id AND enabled = 1)

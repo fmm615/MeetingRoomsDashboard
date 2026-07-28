@@ -27,6 +27,8 @@ const CLOSE_HOUR = 18;
 const SLOT_MINUTES = 15;
 const TOTAL_SLOTS = ((CLOSE_HOUR - OPEN_HOUR) * 60) / SLOT_MINUTES;
 const BOOKING_WINDOW_DAYS = 14;
+const WEEKEND_CLOSED_MESSAGE =
+  "Bookings are unavailable on Fridays and Saturdays.";
 
 interface Room {
   id: string;
@@ -137,12 +139,30 @@ function dateBounds(): { minimum: string; maximum: string } {
   };
 }
 
-function isDateAllowed(value: string): boolean {
+function isDateInBookingWindow(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = parseDate(value);
   if (Number.isNaN(parsed.getTime()) || localISO(parsed) !== value) return false;
   const { minimum, maximum } = dateBounds();
   return value >= minimum && value <= maximum;
+}
+
+function isWeekendDate(value: string): boolean {
+  if (!isDateInBookingWindow(value)) return false;
+  const day = parseDate(value).getDay();
+  return day === 5 || day === 6;
+}
+
+function isDateAllowed(value: string): boolean {
+  return isDateInBookingWindow(value) && !isWeekendDate(value);
+}
+
+function nextBookableDate(value: string): string {
+  let date = parseDate(value);
+  while (isWeekendDate(localISO(date))) {
+    date = addDays(date, 1);
+  }
+  return localISO(date);
 }
 
 function isPastSlot(date: string, slot: number): boolean {
@@ -251,6 +271,7 @@ function selectionError(
   rooms: Room[],
   busy: BusyInterval[],
 ): string {
+  if (isWeekendDate(selection.date)) return WEEKEND_CLOSED_MESSAGE;
   if (!isDateAllowed(selection.date)) {
     return `Choose a date within the next ${BOOKING_WINDOW_DAYS} days.`;
   }
@@ -434,7 +455,9 @@ function DateSelector({
           <span className="section-number">1</span>
           <div>
             <h2>Select a date</h2>
-            <p>Bookings can be made up to 14 days in advance.</p>
+            <p>
+              Book up to 14 days ahead. Fridays and Saturdays are unavailable.
+            </p>
           </div>
         </div>
         <label className="date-picker">
@@ -458,7 +481,9 @@ function DateSelector({
             }}
             onChange={(event) => {
               if (!event.target.value) return;
-              onWindowAnchor(event.target.value);
+              if (isDateAllowed(event.target.value)) {
+                onWindowAnchor(event.target.value);
+              }
               onChoose(event.target.value);
             }}
           />
@@ -468,15 +493,24 @@ function DateSelector({
         {dates.map((date) => {
           const value = localISO(date);
           const selected = value === selection.date;
+          const weekend = isWeekendDate(value);
           return (
             <motion.button
               type="button"
-              className={`date-card ${selected ? "selected" : ""}`}
+              className={`date-card ${selected ? "selected" : ""} ${
+                weekend ? "weekend" : ""
+              }`}
               data-date={value}
               aria-pressed={selected}
+              aria-label={
+                weekend
+                  ? `${formatDate(value, true)}, weekend unavailable`
+                  : formatDate(value, true)
+              }
+              disabled={weekend}
               key={value}
               onClick={() => onChoose(value)}
-              {...buttonMotion(reduced)}
+              {...buttonMotion(reduced, !weekend)}
             >
               {selected && (
                 <motion.span
@@ -494,6 +528,9 @@ function DateSelector({
                 {date.toLocaleDateString("en-GB", { weekday: "short" })}
                 <strong>{date.getDate()}</strong>
                 {date.toLocaleDateString("en-GB", { month: "short" })}
+                {weekend && (
+                  <small className="date-card-status">Unavailable</small>
+                )}
               </span>
             </motion.button>
           );
@@ -1952,7 +1989,11 @@ function App() {
     () => makeMotionVariants(reduced, mobile),
     [reduced, mobile],
   );
-  const initialDate = useMemo(() => dateBounds().minimum, []);
+  const initialWindowAnchor = useMemo(() => dateBounds().minimum, []);
+  const initialDate = useMemo(
+    () => nextBookableDate(initialWindowAnchor),
+    [initialWindowAnchor],
+  );
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(true);
   const [selection, setSelection] = useState<Selection>({
@@ -1961,7 +2002,8 @@ function App() {
     start: null,
     end: null,
   });
-  const [dateWindowAnchor, setDateWindowAnchor] = useState(initialDate);
+  const [dateWindowAnchor, setDateWindowAnchor] =
+    useState(initialWindowAnchor);
   const [busy, setBusy] = useState<BusyInterval[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(true);
   const [availabilityError, setAvailabilityError] = useState("");
@@ -2054,11 +2096,12 @@ function App() {
 
   const resetBookingFlow = useCallback(
     (historyMode: "push" | "replace" | "none" = "none") => {
-      const nextDate = dateBounds().minimum;
+      const windowAnchor = dateBounds().minimum;
+      const nextDate = nextBookableDate(windowAnchor);
       if (historyMode === "push") history.pushState({}, "", "/book");
       if (historyMode === "replace") history.replaceState({}, "", "/book");
       setSelection({ date: nextDate, room: "", start: null, end: null });
-      setDateWindowAnchor(nextDate);
+      setDateWindowAnchor(windowAnchor);
       setBusy([]);
       setEditingToken(null);
       setManagedBooking(null);
@@ -2277,6 +2320,10 @@ function App() {
   }, [dialog, editingToken, loadAvailability, page]);
 
   const chooseDate = async (date: string) => {
+    if (isWeekendDate(date)) {
+      showToast(WEEKEND_CLOSED_MESSAGE);
+      return;
+    }
     if (!isDateAllowed(date)) {
       showToast(`Choose a date within the next ${BOOKING_WINDOW_DAYS} days.`);
       return;
@@ -2492,6 +2539,12 @@ function App() {
   const editBooking = async () => {
     const item = managedBooking;
     if (!item || item.status === "cancelled") return;
+    if (isWeekendDate(item.date)) {
+      showToast(
+        "This existing weekend booking cannot be edited, but it can still be cancelled.",
+      );
+      return;
+    }
     if (!isDateAllowed(item.date) || isPastSlot(item.date, item.start)) {
       showToast("Past bookings can no longer be edited.");
       return;
@@ -2688,7 +2741,7 @@ function App() {
         variants={variants}
         onDraft={setDraft}
         onChooseDate={(date) => {
-          setDateWindowAnchor(date);
+          if (isDateAllowed(date)) setDateWindowAnchor(date);
           void chooseDate(date);
         }}
         onChooseStart={chooseStart}
