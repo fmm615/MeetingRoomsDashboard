@@ -16,11 +16,12 @@ npm install
 
 ## Supabase setup
 
-Copy `.env.example` to `.env` and set the server-only credentials:
+Copy `.env.example` to `.env` and set the project credentials:
 
 ```bash
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SECRET_KEY=your-server-only-secret-key
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_browser-safe-key
 ```
 
 Legacy projects may use `SUPABASE_SERVICE_ROLE_KEY` instead of `SUPABASE_SECRET_KEY`.
@@ -29,9 +30,11 @@ Apply the SQL files in `supabase/migrations/` in filename order before starting
 the app. The initial migration creates and seeds the room catalogue, bookings,
 room blocks, database functions, conflict constraints, and server-only
 permissions. The participant migration safely upgrades projects that already
-applied the initial schema.
+applied the initial schema. The availability-broadcast migration adds
+privacy-safe Realtime invalidation events for bookings and room blocks.
 
-Never expose either Supabase secret key to browser code.
+The publishable key is intentionally browser-safe. Never expose the Supabase
+secret key to browser code.
 
 ## Run locally
 
@@ -63,7 +66,9 @@ Open [http://127.0.0.1:8080/book](http://127.0.0.1:8080/book).
 - Private-link editing of date, start time, duration, team, owner, email, attendees, title, and notes
 - Past bookings cannot be recycled into future reservations
 - Idempotent cancellation that immediately returns time to availability
-- Availability responses that never expose names, email, attendees, notes, references, or tokens
+- Supabase Broadcast updates open calendars immediately after availability changes
+- Realtime payloads contain only the affected date and room
+- Availability responses never expose names, email, attendees, notes, references, or tokens
 - Responsive and keyboard-accessible drawers
 - Security headers and no-store API responses
 
@@ -98,6 +103,8 @@ Supabase remains the single source of truth. If two people submit the same room
 and time together, the database confirms one and rejects the other with a
 conflict response. Public availability stays limited to busy intervals; owner,
 attendee, email, title, and notes remain behind the private booking link.
+Realtime tells open calendars which date and room changed, then each calendar
+refetches the protected availability API.
 
 ## Routes
 
@@ -106,6 +113,7 @@ attendee, email, title, and notes remain behind the private booking link.
 - `/booking/[token]` — confirmation, editing, and cancellation
 - `/api/rooms` — active room catalogue
 - `/api/availability` — non-PII busy intervals
+- `/api/realtime-config` — browser-safe Realtime URL and publishable key
 - `/api/bookings` — create a booking
 - `/api/bookings/[token]` — view, edit, or cancel via private token
 
@@ -117,7 +125,7 @@ Run the complete static, production-build, API, and Postgres-policy gate:
 npm run check
 ```
 
-The API tests use an in-memory store double, not a second database. The Supabase migration is checked for overlap, weekend, room-block, RLS, and service-role protections.
+The API tests use an in-memory store double, not a second database. The Supabase migrations are checked for overlap, weekend, room-block, RLS, service-role, Realtime payload, and browser-configuration protections.
 
 The optional browser suites require Chrome remote debugging and a configured local Supabase project:
 
@@ -131,7 +139,7 @@ npm run test:motion
 The included `api/index.js` and `vercel.json` support Vercel deployment.
 
 - Apply all Supabase migrations in filename order before deployment.
-- Configure `SUPABASE_URL` and `SUPABASE_SECRET_KEY` as server-only environment variables.
+- Configure `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `SUPABASE_PUBLISHABLE_KEY`.
 - Serve the application over HTTPS.
 - Restrict access to the intended office or team.
 - Set `PORT` and `HOST` only for local or self-hosted operation.

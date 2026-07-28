@@ -1,4 +1,9 @@
 import {
+  createClient,
+  type RealtimeChannel,
+  type SupabaseClient,
+} from "@supabase/supabase-js";
+import {
   AnimatePresence,
   MotionConfig,
   motion,
@@ -100,6 +105,12 @@ interface ApiError extends Error {
 interface ToastMessage {
   id: number;
   message: string;
+}
+
+interface RealtimeConfig {
+  enabled: boolean;
+  url?: string;
+  publishableKey?: string;
 }
 
 function localISO(date: Date): string {
@@ -2101,12 +2112,18 @@ function App() {
   const selectionRef = useRef(selection);
   const roomsRef = useRef(rooms);
   const busyRef = useRef(busy);
+  const pageRef = useRef(page);
+  const editingTokenRef = useRef(editingToken);
+  const submittingRef = useRef(submitting);
 
   useEffect(() => {
     selectionRef.current = selection;
     roomsRef.current = rooms;
     busyRef.current = busy;
-  }, [busy, rooms, selection]);
+    pageRef.current = page;
+    editingTokenRef.current = editingToken;
+    submittingRef.current = submitting;
+  }, [busy, editingToken, page, rooms, selection, submitting]);
 
   const showToast = useCallback((message: string) => {
     setToast({ id: Date.now(), message });
@@ -2145,6 +2162,93 @@ function App() {
     },
     [],
   );
+
+  useEffect(() => {
+    let active = true;
+    let realtimeClient: SupabaseClient | null = null;
+    let channel: RealtimeChannel | null = null;
+    let refreshTimer = 0;
+
+    const subscribe = async () => {
+      try {
+        const config = await api<RealtimeConfig>("/api/realtime-config");
+        if (
+          !active ||
+          !config.enabled ||
+          !config.url ||
+          !config.publishableKey
+        ) {
+          return;
+        }
+        realtimeClient = createClient(config.url, config.publishableKey, {
+          auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+          },
+        });
+        channel = realtimeClient
+          .channel("room-availability")
+          .on(
+            "broadcast",
+            { event: "availability_changed" },
+            ({ payload }) => {
+              if (
+                !active ||
+                pageRef.current !== "booking" ||
+                submittingRef.current ||
+                !payload ||
+                typeof payload.date !== "string" ||
+                payload.date !== selectionRef.current.date
+              ) {
+                return;
+              }
+              window.clearTimeout(refreshTimer);
+              refreshTimer = window.setTimeout(async () => {
+                const current = selectionRef.current;
+                const intervals = await loadAvailability(
+                  current.date,
+                  editingTokenRef.current,
+                );
+                const latest = selectionRef.current;
+                if (
+                  latest.date === current.date &&
+                  latest.start !== null &&
+                  latest.end !== null &&
+                  conflictFor(
+                    intervals,
+                    latest.room,
+                    latest.start,
+                    latest.end,
+                  )
+                ) {
+                  setSelection((value) => ({
+                    ...value,
+                    start: null,
+                    end: null,
+                  }));
+                  showToast(
+                    "Availability changed. Choose another start time.",
+                  );
+                }
+              }, 80);
+            },
+          )
+          .subscribe();
+      } catch {
+        return;
+      }
+    };
+
+    void subscribe();
+    return () => {
+      active = false;
+      window.clearTimeout(refreshTimer);
+      if (realtimeClient && channel) {
+        void realtimeClient.removeChannel(channel);
+      }
+    };
+  }, [loadAvailability, showToast]);
 
   const loadManagedBooking = useCallback(async (token: string) => {
     setPage("manage");

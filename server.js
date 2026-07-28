@@ -404,13 +404,37 @@ function generateReference() {
   return `PB-${randomBytes(8).toString("hex").toUpperCase()}`;
 }
 
-function applySecurityHeaders(res) {
+function realtimeBrowserConfig(environment = process.env) {
+  const url = environment.SUPABASE_URL || "";
+  const publishableKey = environment.SUPABASE_PUBLISHABLE_KEY || "";
+  if (!publishableKey.startsWith("sb_publishable_")) {
+    return { enabled: false };
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return { enabled: false };
+    return {
+      enabled: true,
+      url: parsed.origin,
+      publishableKey,
+      websocketOrigin: `wss://${parsed.host}`
+    };
+  } catch {
+    return { enabled: false };
+  }
+}
+
+function applySecurityHeaders(res, realtimeConfig = { enabled: false }) {
+  const connectSources = ["'self'"];
+  if (realtimeConfig.enabled) {
+    connectSources.push(realtimeConfig.url, realtimeConfig.websocketOrigin);
+  }
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src ${connectSources.join(" ")}; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`
   );
 }
 
@@ -424,16 +448,32 @@ function createRequestHandler({
   store,
   now = () => new Date(),
   root = ROOT,
-  apiOnly = false
+  apiOnly = false,
+  environment = process.env
 }) {
   if (!store) throw new Error("A booking store is required.");
+  const realtimeConfig = realtimeBrowserConfig(environment);
 
   return async function requestHandler(req, res) {
-    applySecurityHeaders(res);
+    applySecurityHeaders(res, realtimeConfig);
     const url = new URL(req.url, "http://localhost");
     const pathname = routedPathname(url);
 
     try {
+      if (pathname === "/api/realtime-config" && req.method === "GET") {
+        return sendJSON(
+          res,
+          200,
+          realtimeConfig.enabled
+            ? {
+                enabled: true,
+                url: realtimeConfig.url,
+                publishableKey: realtimeConfig.publishableKey
+              }
+            : { enabled: false }
+        );
+      }
+
       if (pathname === "/api/rooms" && req.method === "GET") {
         const rows = await store.listRooms();
         return sendJSON(res, 200, { rooms: rows.map(publicRoom) });
@@ -619,7 +659,8 @@ function createApp(options = {}) {
   const handler = createRequestHandler({
     store,
     now: options.now,
-    root: options.root || ROOT
+    root: options.root || ROOT,
+    environment: options.environment
   });
   return {
     server: http.createServer(handler),
@@ -655,6 +696,7 @@ module.exports = {
   publicBooking,
   durationOptions,
   databaseError,
+  realtimeBrowserConfig,
   constants: {
     OPEN_HOUR,
     CLOSE_HOUR,

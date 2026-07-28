@@ -610,6 +610,61 @@ test("Postgres migration enforces conflicts, workweek rules, and server-only acc
   );
   assert.match(participantUpgrade, /drop function if exists public\.create_booking/i);
   assert.match(participantUpgrade, /bookings_attendees_check/i);
+
+  const realtimeUpgrade = fs.readFileSync(
+    path.join(
+      __dirname, "..", "supabase", "migrations",
+      "20260728020000_add_availability_broadcast.sql"
+    ),
+    "utf8"
+  );
+  assert.match(realtimeUpgrade, /realtime\.send/i);
+  assert.match(realtimeUpgrade, /availability_changed/);
+  assert.match(realtimeUpgrade, /bookings_broadcast_availability/);
+  assert.match(realtimeUpgrade, /room_blocks_broadcast_availability/);
+  assert.match(
+    realtimeUpgrade,
+    /jsonb_build_object\(\s*'date'[\s\S]*'room'/i
+  );
+  assert.doesNotMatch(
+    realtimeUpgrade,
+    /\b(name|email|attendees|notes|token_hash|reference)\b/i
+  );
+  assert.doesNotMatch(realtimeUpgrade, /\bcurrent_date\b/i);
+});
+
+test("Realtime exposes only browser-safe configuration and CSP origins", async t => {
+  const disabled = await fixture({
+    environment: {
+      SUPABASE_URL: "https://project-ref.supabase.co",
+      SUPABASE_SECRET_KEY: "server-secret"
+    }
+  });
+  t.after(disabled.close);
+  const disabledResult = await disabled.request("/api/realtime-config");
+  assert.deepEqual(disabledResult.body, { enabled: false });
+
+  const app = await fixture({
+    environment: {
+      SUPABASE_URL: "https://project-ref.supabase.co",
+      SUPABASE_SECRET_KEY: "server-secret",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_browser-safe"
+    }
+  });
+  t.after(app.close);
+  const result = await app.request("/api/realtime-config");
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body, {
+    enabled: true,
+    url: "https://project-ref.supabase.co",
+    publishableKey: "sb_publishable_browser-safe"
+  });
+  assert.doesNotMatch(JSON.stringify(result.body), /server-secret/);
+  assert.match(
+    result.response.headers.get("content-security-policy"),
+    /connect-src 'self' https:\/\/project-ref\.supabase\.co wss:\/\/project-ref\.supabase\.co/
+  );
+  assert.equal(result.response.headers.get("cache-control"), "no-store");
 });
 
 test("Supabase configuration requires server-side credentials and normalizes joins", () => {
