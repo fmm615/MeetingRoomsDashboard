@@ -31,6 +31,12 @@ const OPEN_HOUR = 8;
 const CLOSE_HOUR = 18;
 const SLOT_MINUTES = 15;
 const TOTAL_SLOTS = ((CLOSE_HOUR - OPEN_HOUR) * 60) / SLOT_MINUTES;
+const START_TIME_INTERVAL_MINUTES = 30;
+const START_SLOT_STEP = START_TIME_INTERVAL_MINUTES / SLOT_MINUTES;
+const START_SLOTS = Array.from(
+  { length: Math.ceil(TOTAL_SLOTS / START_SLOT_STEP) },
+  (_, index) => index * START_SLOT_STEP,
+);
 const BOOKING_WINDOW_DAYS = 14;
 const WEEKEND_CLOSED_MESSAGE =
   "Bookings are unavailable on Fridays and Saturdays.";
@@ -277,7 +283,7 @@ function roomHasAvailability(
   loading: boolean,
 ): boolean | null {
   if (loading) return null;
-  for (let slot = 0; slot < TOTAL_SLOTS; slot += 1) {
+  for (let slot = 0; slot < TOTAL_SLOTS; slot += START_SLOT_STEP) {
     if (
       durationOptions(room).some((duration) =>
         durationIsAvailable(room, date, busy, slot, duration),
@@ -311,6 +317,9 @@ function selectionError(
   }
   const start = selection.start as number;
   const end = selection.end as number;
+  if (start % START_SLOT_STEP !== 0) {
+    return `Start times must use ${START_TIME_INTERVAL_MINUTES}-minute intervals.`;
+  }
   const duration = (end - start) * SLOT_MINUTES;
   if (!durationOptions(room).includes(duration)) return durationError(room);
   if (isPastSlot(selection.date, start)) {
@@ -770,7 +779,7 @@ function TimePanel({
             <h2>Select a time</h2>
             <p id="time-help">
               {room
-                ? `15-minute start times · ${durationBadge(room)}`
+                ? `30-minute start times · ${durationBadge(room)}`
                 : "Select a room to see availability."}
             </p>
           </div>
@@ -850,9 +859,9 @@ function TimePanel({
             <div className="time-duration-layout">
               <fieldset className="time-choice" disabled={loading}>
                 <legend>Start time</legend>
-                <p>Times use 15-minute intervals.</p>
+                <p>Times use 30-minute intervals.</p>
                 <div className="time-grid" id="time-grid">
-                  {Array.from({ length: TOTAL_SLOTS }, (_, slot) => {
+                  {START_SLOTS.map((slot) => {
                     const past = isPastSlot(selection.date, slot);
                     const interval = conflictFor(busy, room.id, slot, slot + 1);
                     const hasDuration = durationOptions(room).some((duration) =>
@@ -1475,7 +1484,7 @@ function DetailsDrawer({
                       <option value="" disabled>
                         Select a time
                       </option>
-                      {Array.from({ length: TOTAL_SLOTS }, (_, slot) => {
+                      {START_SLOTS.map((slot) => {
                         const available = durationOptions(room).some(
                           (optionDuration) =>
                             durationIsAvailable(

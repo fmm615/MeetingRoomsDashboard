@@ -240,9 +240,9 @@ rescheduledDateValue.setUTCDate(rescheduledDateValue.getUTCDate() + 1);
 const rescheduledDate = rescheduledDateValue.toISOString().slice(0, 10);
 await waitFor("!document.querySelector('.room-availability')?.textContent.includes('Checking')", evaluate);
 await evaluate("document.querySelector('[data-room=\"meeting-a\"]').click()");
-await waitFor("document.querySelectorAll('.time-slot').length === 40", evaluate);
-assert.equal(await evaluate("document.querySelector('.time-slot[data-slot=\"1\"]').textContent"), "8:15 AM");
-await evaluate("document.querySelector('.time-slot[data-slot=\"5\"]').click()");
+await waitFor("document.querySelectorAll('.time-slot').length === 20", evaluate);
+assert.equal(await evaluate("document.querySelector('.time-slot[data-slot=\"2\"]').textContent"), "8:30 AM");
+await evaluate("document.querySelector('.time-slot[data-slot=\"4\"]').click()");
 await waitFor("document.querySelectorAll('.duration-option').length === 4", evaluate);
 await evaluate("document.querySelector('.duration-option[data-duration=\"45\"]').click()");
 assert.equal(await evaluate("document.querySelectorAll('.time-slot.selected').length"), 1);
@@ -288,13 +288,13 @@ assert.equal(await evaluate("[...document.querySelectorAll('h1')].filter(heading
 assert.equal(await evaluate("document.querySelector('#details-drawer').hasAttribute('inert')"), true);
 
 let availability = await fetch(`${appOrigin}/api/availability?date=${selectedDate}&room=meeting-a`).then(response => response.json());
-assert.deepEqual(availability.busy, [{ room: "meeting-a", start: 5, end: 8, type: "booked" }]);
+assert.deepEqual(availability.busy, [{ room: "meeting-a", start: 4, end: 7, type: "booked" }]);
 
 await evaluate("document.querySelector('#edit-booking').click()");
 await waitFor("document.querySelector('#details-drawer').classList.contains('open')", evaluate);
 assert.equal(await evaluate("document.querySelector('#booking-form').elements.title.value"), "End-to-end review");
 assert.equal(await evaluate("document.activeElement.id"), "edit-date");
-assert.equal(await evaluate("document.querySelector('#edit-start').value"), "5");
+assert.equal(await evaluate("document.querySelector('#edit-start').value"), "4");
 assert.equal(await evaluate("document.querySelector('#edit-duration').value"), "45");
 await evaluate(`(() => {
   const input = document.querySelector('#edit-date');
@@ -397,7 +397,7 @@ console.log(JSON.stringify({
     "four canonical room cards and availability labels",
     "Other date invokes the native date picker",
     "guidelines content, focus, and restoration",
-    "15-minute start and room-specific duration selection",
+    "30-minute start and room-specific duration selection",
     "details route, summary, and room reminder",
     "booking creation",
     "Slack-compatible room, location, duration, and private reference",

@@ -468,8 +468,8 @@ try {
   await evaluate(
     "document.querySelector('.select-room-button:not(:disabled)').click()",
   );
-  await waitFor("40 time slots", () =>
-    evaluate("document.querySelectorAll('.time-slot').length === 40"),
+  await waitFor("20 time slots", () =>
+    evaluate("document.querySelectorAll('.time-slot').length === 20"),
   );
   const slotSelector = ".time-slot:not(:disabled)";
   await movePointerTo(slotSelector);

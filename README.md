@@ -50,7 +50,7 @@ Open [http://127.0.0.1:8080/book](http://127.0.0.1:8080/book).
 
 - Four centrally configured spaces: Meeting Room, Standing Workstations, Innovation Hub, and Quiet Pods
 - Compact room cards with selected-date availability and accessible guidelines drawers
-- 15-minute start times and room-specific duration choices
+- 30-minute start times and room-specific duration choices
 - Bahrain workweek rules: Friday and Saturday are visibly unavailable and rejected by both the API and database
 - Framer Motion page, card, date, slot, drawer, error, loading, and confirmation transitions
 - Reduced-motion support

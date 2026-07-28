@@ -316,7 +316,7 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
     ["boardroom", 0, 1, "2026-07-30"],
     ["meeting-a", 2, 6, "2026-08-02"],
     ["meeting-b", 0, 8, "2026-08-03"],
-    ["quiet-pods", 3, 6, "2026-08-04"]
+    ["quiet-pods", 4, 7, "2026-08-04"]
   ];
   for (const [room, start, end, date] of validCases) {
     const created = await createBooking(app, {
@@ -346,6 +346,7 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
     [{ room: "missing-room" }, /active room/i],
     [{ start: -1 }, /between/i],
     [{ start: 39, end: 41 }, /between/i],
+    [{ start: 1, end: 3 }, /30-minute intervals/i],
     [{ start: 4, end: 4 }, /between/i],
     [{ date: "2026-07-27", start: 0, end: 1 }, /past/i],
     [{ room: "quiet-pods", start: 0, end: 1 }, /30 or 45/i]
@@ -378,7 +379,7 @@ test("overlaps, back-to-back boundaries, and room blocks remain protected", asyn
   assert.equal(first.response.status, 201);
   const overlap = await createBooking(app, {
     ...BASE_BOOKING,
-    start: 5,
+    start: 4,
     end: 7,
     name: "Overlap"
   });
@@ -435,8 +436,8 @@ test("overlaps, back-to-back boundaries, and room blocks remain protected", asyn
   const blocked = await createBooking(app, {
     ...BASE_BOOKING,
     date: "2026-07-30",
-    start: 9,
-    end: 11
+    start: 10,
+    end: 12
   });
   assert.equal(blocked.response.status, 409);
   assert.match(blocked.body.error, /unavailable/i);
@@ -522,8 +523,8 @@ test("availability exposes intervals without booking PII", async t => {
   const created = await createBooking(app, {
     ...BASE_BOOKING,
     room: "meeting-a",
-    start: 5,
-    end: 8,
+    start: 6,
+    end: 9,
     name: "Sara",
     attendees: "Mahmood, Ahmed",
     title: "Quick planning",
@@ -535,7 +536,7 @@ test("availability exposes intervals without booking PII", async t => {
     "/api/availability?date=2026-07-28"
   );
   assert.deepEqual(availability.body.busy, [
-    { room: "meeting-a", start: 5, end: 8, type: "booked" }
+    { room: "meeting-a", start: 6, end: 9, type: "booked" }
   ]);
   assert.doesNotMatch(
     JSON.stringify(availability.body),
@@ -631,6 +632,17 @@ test("Postgres migration enforces conflicts, workweek rules, and server-only acc
     /\b(name|email|attendees|notes|token_hash|reference)\b/i
   );
   assert.doesNotMatch(realtimeUpgrade, /\bcurrent_date\b/i);
+
+  const startIntervalUpgrade = fs.readFileSync(
+    path.join(
+      __dirname, "..", "supabase", "migrations",
+      "20260728030000_add_30_minute_start_times.sql"
+    ),
+    "utf8"
+  );
+  assert.match(startIntervalUpgrade, /START_TIME_INTERVAL/);
+  assert.match(startIntervalUpgrade, /mod\(new\.start_slot,\s*2\)/i);
+  assert.doesNotMatch(startIntervalUpgrade, /alter table[\s\S]*add constraint/i);
 });
 
 test("Realtime exposes only browser-safe configuration and CSP origins", async t => {

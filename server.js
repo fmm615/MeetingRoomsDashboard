@@ -11,6 +11,8 @@ const OPEN_HOUR = 8;
 const CLOSE_HOUR = 18;
 const SLOT_MINUTES = 15;
 const TOTAL_SLOTS = ((CLOSE_HOUR - OPEN_HOUR) * 60) / SLOT_MINUTES;
+const START_TIME_INTERVAL_MINUTES = 30;
+const START_SLOT_STEP = START_TIME_INTERVAL_MINUTES / SLOT_MINUTES;
 const BOOKING_WINDOW_DAYS = 14;
 const OFFICE_UTC_OFFSET_MINUTES = 3 * 60;
 const WEEKEND_CLOSED_MESSAGE =
@@ -255,6 +257,12 @@ async function validateBooking(
       error: `Select a time between ${OPEN_HOUR}:00 and ${CLOSE_HOUR}:00.`
     };
   }
+  if (start % START_SLOT_STEP !== 0) {
+    return {
+      error:
+        `Start times must use ${START_TIME_INTERVAL_MINUTES}-minute intervals.`
+    };
+  }
 
   const durationMinutes = (end - start) * SLOT_MINUTES;
   const startsOnIncrement =
@@ -363,6 +371,12 @@ function databaseError(error, room) {
     .join(" ");
   if (message.includes("WEEKEND_CLOSED")) {
     return { status: 400, message: WEEKEND_CLOSED_MESSAGE };
+  }
+  if (message.includes("START_TIME_INTERVAL")) {
+    return {
+      status: 400,
+      message: `Start times must use ${START_TIME_INTERVAL_MINUTES}-minute intervals.`
+    };
   }
   if (
     error?.code === "23P01" ||
@@ -701,6 +715,8 @@ module.exports = {
     OPEN_HOUR,
     CLOSE_HOUR,
     SLOT_MINUTES,
+    START_TIME_INTERVAL_MINUTES,
+    START_SLOT_STEP,
     TOTAL_SLOTS,
     BOOKING_WINDOW_DAYS
   }
