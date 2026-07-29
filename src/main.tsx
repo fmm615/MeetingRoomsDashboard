@@ -241,6 +241,8 @@ function attendeeSummary(value: string): string {
   return emails.length === 1 ? emails[0]! : `${emails.length} attendees`;
 }
 
+// A warning is valid only for this exact schedule and participant set. Any
+// date, time, organizer, or attendee change requires a fresh Google check.
 function calendarAvailabilityKey(selection: Selection, draft: Pick<BookingDraft, "email" | "attendees">): string {
   return [
     selection.date,
@@ -1540,6 +1542,8 @@ interface AttendeeSelectorProps {
   onImport: () => void;
 }
 
+// The closed control is a select-style trigger; search and manual-email
+// creation happen only in its popover, keeping multi-select one combobox.
 function AttendeeSelector({
   contacts,
   loading,
@@ -3525,6 +3529,8 @@ function App() {
       return;
     }
 
+    // Check Google after local validation. A warning needs an explicit
+    // Book anyway action; it never replaces database room-conflict protection.
     const checkKey = calendarAvailabilityKey(selection, payload);
     const activeWarning =
       calendarAvailabilityWarning?.key === checkKey

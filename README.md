@@ -40,7 +40,7 @@ Google refresh-token storage and Calendar event references for bookings.
 The publishable key is intentionally browser-safe. Never expose the Supabase
 secret key to browser code.
 
-## Google login, Contacts, and Calendar setup for local testing
+## Google login, Contacts, and Calendar setup
 
 Normal login requests only the basic Google identity scopes (`openid`, email,
 profile) plus the narrow Calendar event scope needed to create and update
@@ -57,11 +57,12 @@ In the Google Cloud Console:
 3. Under Data Access, include `openid`, `userinfo.email`, and
    `userinfo.profile`.
 4. Create a client with application type **Web application**.
-5. Add this Authorized JavaScript origin:
+5. Add the origin for each environment that will use Google sign-in:
 
    ```text
    http://127.0.0.1:8080
    ```
+   https://meeting-rooms-dashboard.vercel.app
 
 6. Add the Supabase callback shown on the Google provider page as an
    Authorized redirect URI. For the current project it is:
@@ -79,12 +80,13 @@ In Supabase Dashboard:
 1. Open **Authentication → Sign In / Providers → Google**.
 2. Enable Google, paste the Client ID and Client Secret, and save.
 3. Open **Authentication → URL Configuration**.
-4. Add this Redirect URL:
+4. Add these Redirect URLs:
 
    ```text
    http://127.0.0.1:8080/**
    ```
 
+   https://meeting-rooms-dashboard.vercel.app/**
 ### 3. Enable Google Calendar sync
 
 1. In Google Cloud Console, enable **Google Calendar API** under **APIs & Services → Library**.
@@ -107,6 +109,7 @@ In Supabase Dashboard:
 
 The app encrypts the Google refresh token before storage. A successful booking creates an event in the booker's primary Calendar and sends invitations to selected attendees; edits update it and cancellation removes it. The private management link is never included in the event.
 
+After adding or changing a Calendar scope, each existing user must select **Reconnect calendar** and approve the new Google consent screen once.
 Before saving a booking, the app checks the booker and selected attendees using Google Calendar free/busy data. It returns only `available`, `busy`, or `unknown`—never event titles, notes, or attendees. A busy or unavailable result shows a warning and requires the booker to deliberately choose **Book anyway**. The check can only see calendars that Google Workspace makes visible to the signed-in booker; colleagues must share free/busy availability or an administrator must configure an appropriate company-wide solution.
 
 ### 4. Enable the Enrollment contact import
@@ -170,6 +173,7 @@ The first page is now a Google sign-in gate. After successful login:
 - Reduced-motion support
 - Google sign-in with server-verified Supabase sessions
 - Google Calendar events in the signed-in booker’s primary calendar, with attendee invitations and update/cancellation notifications
+- Pre-confirmation Google free/busy checks for the booker and selected attendees, with a deliberate **Book anyway** override when a calendar is busy or cannot be checked
 - Google-supplied booking owner name and organizer email
 - Required booking team (PLAYBOOK, O&H, or joint) and meeting title or purpose; optional attendees and notes
 - Searchable saved attendees, manual email entry, and read-only Google Contacts `Enrollment` import
@@ -236,6 +240,7 @@ refetches the protected availability API.
 - `/api/attendees/import-google` — protected read-only Enrollment import
 - `/api/calendar/status` — protected Calendar connection status
 - `/api/calendar/connect` — saves an encrypted Calendar refresh token after Google consent
+- `/api/calendar/availability` — returns only `available`, `busy`, or `unknown` for the proposed schedule
 - `/api/bookings` — create a booking
 - `/api/bookings/[token]` — view, edit, or cancel via private token
 
@@ -263,9 +268,29 @@ npm run test:motion
 
 ## Deployment
 
-Deployment is intentionally deferred until Google login has been tested
-locally. The existing `api/index.js` and `vercel.json` remain available for the
-later Vercel step.
+The production application is deployed on Vercel:
+[meeting-rooms-dashboard.vercel.app](https://meeting-rooms-dashboard.vercel.app/book).
+The Vercel project is `meeting-rooms-dashboard`; it can be connected to the
+GitHub repository for automatic deployments, or deployed manually with:
+
+```bash
+npx vercel --prod
+```
+
+Set the following environment variables in **Vercel → Project → Environment
+Variables** for Production (and Preview if it needs the same integrations):
+
+- `SUPABASE_URL`
+- `SUPABASE_SECRET_KEY`
+- `SUPABASE_PUBLISHABLE_KEY`
+- `GOOGLE_CALENDAR_CLIENT_ID`
+- `GOOGLE_CALENDAR_CLIENT_SECRET`
+- `GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY`
+- `GOOGLE_ALLOWED_DOMAINS` (optional allow-list of Google Workspace domains)
+
+The Calendar client secret, token-encryption key, and Supabase secret key are
+server-only values: never prefix them with `VITE_`, expose them in browser code,
+or commit them to `.env` files. Redeploy after changing an environment value.
 
 - Apply all Supabase migrations in filename order before deployment.
 - Configure `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`,

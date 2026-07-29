@@ -217,6 +217,8 @@ function parseAttendeeEmails(value) {
   };
 }
 
+// Shared trust boundary for create and edit requests. The database repeats
+// conflict protection, so browser values cannot bypass room-booking rules.
 async function validateBooking(
   input,
   store,
@@ -807,6 +809,8 @@ function createRequestHandler({
         );
       }
 
+      // Every API route below this point requires a verified Google-backed
+      // Supabase session; public configuration routes are handled above.
       const signedInUser = pathname.startsWith("/api/")
         ? await authenticatedGoogleUser(req, verifyAccessToken, approvedDomains)
         : null;
@@ -833,6 +837,8 @@ function createRequestHandler({
         return sendJSON(res, 200, calendar);
       }
 
+      // Validate first so free/busy cannot probe arbitrary schedules; Google
+      // receives only calendar IDs plus the requested time range.
       if (pathname === "/api/calendar/availability" && req.method === "POST") {
         const input = await readJSON(req);
         const signedInput = {
