@@ -237,6 +237,9 @@ h1 { font-size: 32px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -.02em;
 .form-error { color: var(--berry); background: #faeff7; padding: 10px; border-radius: 7px; font-size: 12px; margin-top: 15px; }
 .room-reminder { margin-top: 20px; padding: 13px; background: var(--green-soft); border-left: 3px solid #4f8c7d; border-radius: 7px; color: #3f5d56; font-size: 11px; line-height: 1.5; }
 .room-reminder strong { display: block; color: var(--green); font-size: 12px; margin-bottom: 4px; }
+.calendar-availability-warning { margin-top: 14px; padding: 12px 13px; border: 1px solid #e3c990; border-left: 3px solid #b57c13; border-radius: 7px; background: #fff8e8; color: #6c4c08; font-size: 11px; line-height: 1.5; }
+.calendar-availability-warning p { margin: 0; }
+.calendar-availability-warning p + p { margin-top: 5px; }
 .guidelines-body { flex: 1; min-height: 0; overflow: auto; padding: 22px 24px; }
 .guidelines-section + .guidelines-section { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 20px; }
 .guidelines-section h3 { margin: 0 0 8px; font-size: 14px; }

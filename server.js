@@ -833,6 +833,22 @@ function createRequestHandler({
         return sendJSON(res, 200, calendar);
       }
 
+      if (pathname === "/api/calendar/availability" && req.method === "POST") {
+        const input = await readJSON(req);
+        const signedInput = {
+          ...input,
+          name: signedInUser.name,
+          email: signedInUser.email
+        };
+        const checked = await validateBooking(signedInput, store, now());
+        if (checked.error) return sendError(res, 400, checked.error);
+        return sendJSON(
+          res,
+          200,
+          await googleCalendar.checkAvailability(checked.value, signedInUser.id)
+        );
+      }
+
       if (pathname === "/api/attendees" && req.method === "GET") {
         const contacts = await store.listAttendeeDirectory();
         return sendJSON(res, 200, { contacts });

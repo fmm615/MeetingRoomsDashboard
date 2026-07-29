@@ -45,7 +45,8 @@ const WEEKEND_CLOSED_MESSAGE =
 const GOOGLE_CONTACTS_SCOPE =
   "https://www.googleapis.com/auth/contacts.readonly";
 const GOOGLE_CALENDAR_SCOPE =
-  "https://www.googleapis.com/auth/calendar.events.owned";
+  "https://www.googleapis.com/auth/calendar.events.owned " +
+  "https://www.googleapis.com/auth/calendar.events.freebusy";
 
 interface Room {
   id: string;
@@ -146,6 +147,24 @@ interface CalendarStatus {
   email?: string;
 }
 
+type CalendarAvailabilityStatus = "available" | "busy" | "unknown";
+
+interface CalendarAvailabilityCheck {
+  enabled: boolean;
+  connected: boolean;
+  checks: Array<{
+    email: string;
+    status: CalendarAvailabilityStatus;
+  }>;
+}
+
+interface CalendarAvailabilityWarning {
+  key: string;
+  organizerBusy: boolean;
+  busy: string[];
+  unknown: string[];
+}
+
 interface CalendarCredentials {
   providerToken: string;
   providerRefreshToken: string;
@@ -220,6 +239,16 @@ function attendeeSummary(value: string): string {
   const emails = attendeeEmails(value);
   if (!emails.length) return "Solo";
   return emails.length === 1 ? emails[0]! : `${emails.length} attendees`;
+}
+
+function calendarAvailabilityKey(selection: Selection, draft: Pick<BookingDraft, "email" | "attendees">): string {
+  return [
+    selection.date,
+    selection.start ?? "",
+    selection.end ?? "",
+    draft.email.trim().toLowerCase(),
+    ...attendeeEmails(draft.attendees).sort(),
+  ].join("|");
 }
 
 function dateBounds(): { minimum: string; maximum: string } {
@@ -512,7 +541,7 @@ function Header({
   onSignOut,
 }: HeaderProps) {
   const calendarLabel = calendarStatus?.connected
-    ? "Calendar connected"
+    ? "Reconnect calendar"
     : calendarStatus?.enabled
       ? "Connect calendar"
       : "Calendar setup required";
@@ -554,7 +583,6 @@ function Header({
             disabled={
               signingOut ||
               calendarConnecting ||
-              Boolean(calendarStatus?.connected) ||
               !calendarStatus?.enabled
             }
             onClick={onConnectCalendar}
@@ -1857,6 +1885,8 @@ interface DetailsDrawerProps {
   editing: boolean;
   submitting: boolean;
   formError: string;
+  calendarAvailabilityChecking: boolean;
+  calendarWarning: CalendarAvailabilityWarning | null;
   reduced: boolean;
   variants: MotionVariantCollection;
   onDraft: (next: BookingDraft) => void;
@@ -1885,6 +1915,8 @@ function DetailsDrawer({
   editing,
   submitting,
   formError,
+  calendarAvailabilityChecking,
+  calendarWarning,
   reduced,
   variants,
   onDraft,
@@ -2223,6 +2255,31 @@ function DetailsDrawer({
               <strong>Room reminder</strong>
               {reminder}
             </div>
+            {calendarWarning && (
+              <div className="calendar-availability-warning" role="alert">
+                {calendarWarning.organizerBusy && (
+                  <p>
+                    <strong>Your calendar is busy at this time.</strong>
+                  </p>
+                )}
+                {calendarWarning.busy.length > 0 && (
+                  <p>
+                    <strong>
+                      {calendarWarning.busy.length === 1
+                        ? "1 selected attendee is busy at this time."
+                        : `${calendarWarning.busy.length} selected attendees are busy at this time.`}
+                    </strong>
+                    {` ${calendarWarning.busy.join(", ")}`}
+                  </p>
+                )}
+                {calendarWarning.unknown.length > 0 && (
+                  <p>
+                    Availability could not be checked for {calendarWarning.unknown.join(", ")}. Their calendar may not be shared with you.
+                  </p>
+                )}
+                <p>Choose another time, or continue to book anyway.</p>
+              </div>
+            )}
             <AnimatePresence initial={false}>
               {formError && (
                 <motion.div
@@ -2255,16 +2312,28 @@ function DetailsDrawer({
               type="submit"
               className="primary-button loading-button"
               id="confirm-button"
-              disabled={submitting || (editing && !scheduleComplete)}
+              disabled={
+                submitting ||
+                calendarAvailabilityChecking ||
+                (editing && !scheduleComplete)
+              }
               {...buttonMotion(
                 reduced,
-                !submitting && (!editing || scheduleComplete),
+                !submitting && !calendarAvailabilityChecking && (!editing || scheduleComplete),
               )}
             >
               <LoadingButtonLabel
-                loading={submitting}
-                loadingLabel={editing ? "Saving changes" : "Creating booking"}
-                idleLabel={editing ? "Save changes" : "Confirm booking"}
+                loading={submitting || calendarAvailabilityChecking}
+                loadingLabel={
+                  calendarAvailabilityChecking ? "Checking calendars" : editing ? "Saving changes" : "Creating booking"
+                }
+                idleLabel={
+                  calendarWarning
+                    ? "Book anyway"
+                    : editing
+                      ? "Save changes"
+                      : "Confirm booking"
+                }
                 reduced={reduced}
                 variants={variants}
               />
@@ -2709,6 +2778,8 @@ function App() {
     notes: "",
   });
   const [formError, setFormError] = useState("");
+  const [calendarAvailabilityChecking, setCalendarAvailabilityChecking] = useState(false);
+  const [calendarAvailabilityWarning, setCalendarAvailabilityWarning] = useState<CalendarAvailabilityWarning | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [editingToken, setEditingToken] = useState<string | null>(null);
   const [managedBooking, setManagedBooking] = useState<Booking | null>(null);
@@ -3392,6 +3463,7 @@ function App() {
     }
     lastFocusedElement.current = opener;
     setFormError("");
+    setCalendarAvailabilityWarning(null);
     if (!editingToken && window.location.pathname !== "/book/details") {
       history.pushState({}, "", "/book/details");
     }
@@ -3453,6 +3525,51 @@ function App() {
       return;
     }
 
+    const checkKey = calendarAvailabilityKey(selection, payload);
+    const activeWarning =
+      calendarAvailabilityWarning?.key === checkKey
+        ? calendarAvailabilityWarning
+        : null;
+    if (calendarStatus?.connected && !activeWarning) {
+      setCalendarAvailabilityChecking(true);
+      setFormError("");
+      try {
+        const result = await api<CalendarAvailabilityCheck>(
+          "/api/calendar/availability",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+        );
+        const busy = result.checks
+          .filter((check) => check.status === "busy")
+          .map((check) => check.email);
+        const organizerEmail = payload.email.trim().toLowerCase();
+        const organizerBusy = busy.includes(organizerEmail);
+        const busyAttendees = busy.filter((email) => email !== organizerEmail);
+        const unknown = result.checks
+          .filter((check) => check.status === "unknown")
+          .map((check) => check.email);
+        if (organizerBusy || busyAttendees.length || unknown.length) {
+          setCalendarAvailabilityWarning({
+            key: checkKey,
+            organizerBusy,
+            busy: busyAttendees,
+            unknown,
+          });
+          return;
+        }
+      } catch {
+        showFormError(
+          "Attendee calendar availability could not be checked. Reconnect Google Calendar or try again.",
+        );
+        return;
+      } finally {
+        setCalendarAvailabilityChecking(false);
+      }
+    }
+
+    setCalendarAvailabilityWarning(null);
     setSubmitting(true);
     setFormError("");
     try {
@@ -3929,6 +4046,13 @@ function App() {
         editing={Boolean(editingToken)}
         submitting={submitting}
         formError={formError}
+        calendarAvailabilityChecking={calendarAvailabilityChecking}
+        calendarWarning={
+          calendarAvailabilityWarning?.key ===
+          calendarAvailabilityKey(selection, visibleDraft)
+            ? calendarAvailabilityWarning
+            : null
+        }
         reduced={reduced}
         variants={variants}
         onDraft={setDraft}

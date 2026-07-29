@@ -88,7 +88,12 @@ In Supabase Dashboard:
 ### 3. Enable Google Calendar sync
 
 1. In Google Cloud Console, enable **Google Calendar API** under **APIs & Services → Library**.
-2. Under **Google Auth Platform → Data Access**, add `https://www.googleapis.com/auth/calendar.events.owned`.
+2. Under **Google Auth Platform → Data Access**, add both:
+
+   ```text
+   https://www.googleapis.com/auth/calendar.events.owned
+   https://www.googleapis.com/auth/calendar.events.freebusy
+   ```
 3. Add these server-only values to local `.env`, using the same Google OAuth Web client configured in Supabase:
 
    ```bash
@@ -101,6 +106,8 @@ In Supabase Dashboard:
 5. Apply the Calendar SQL migration, restart the local app, then sign in again or choose **Connect calendar** in the header.
 
 The app encrypts the Google refresh token before storage. A successful booking creates an event in the booker's primary Calendar and sends invitations to selected attendees; edits update it and cancellation removes it. The private management link is never included in the event.
+
+Before saving a booking, the app checks the booker and selected attendees using Google Calendar free/busy data. It returns only `available`, `busy`, or `unknown`—never event titles, notes, or attendees. A busy or unavailable result shows a warning and requires the booker to deliberately choose **Book anyway**. The check can only see calendars that Google Workspace makes visible to the signed-in booker; colleagues must share free/busy availability or an administrator must configure an appropriate company-wide solution.
 
 ### 4. Enable the Enrollment contact import
 
