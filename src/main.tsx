@@ -1706,7 +1706,7 @@ function AttendeeSelector({
         <button
           ref={triggerRef}
           id="attendee-selector"
-          className="attendee-trigger"
+          className={`attendee-trigger ${selected.length ? "" : "placeholder"}`}
           type="button"
           role="combobox"
           aria-labelledby="attendee-label"
