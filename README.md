@@ -34,17 +34,18 @@ applied the initial schema. The availability-broadcast migration adds
 privacy-safe Realtime invalidation events for bookings and room blocks.
 The attendee-directory migration makes attendees optional and creates a
 server-only shared directory for Enrollment imports and previously used
-attendee emails.
+attendee emails. The Google Calendar migration adds encrypted, server-only
+Google refresh-token storage and Calendar event references for bookings.
 
 The publishable key is intentionally browser-safe. Never expose the Supabase
 secret key to browser code.
 
-## Google login and Contacts setup for local testing
+## Google login, Contacts, and Calendar setup for local testing
 
 Normal login requests only the basic Google identity scopes (`openid`, email,
-and profile). Google Contacts access is requested separately and only when a
-signed-in user selects **Import/refresh Enrollment**. Google Calendar access is
-not requested yet.
+profile) plus the narrow Calendar event scope needed to create and update
+events on the signed-in booker's primary Calendar. Google Contacts access is
+requested separately and only when a signed-in user selects **Import/refresh Enrollment**.
 
 ### 1. Create the Google OAuth client
 
@@ -84,7 +85,24 @@ In Supabase Dashboard:
    http://127.0.0.1:8080/**
    ```
 
-### 3. Enable the Enrollment contact import
+### 3. Enable Google Calendar sync
+
+1. In Google Cloud Console, enable **Google Calendar API** under **APIs & Services → Library**.
+2. Under **Google Auth Platform → Data Access**, add `https://www.googleapis.com/auth/calendar.events.owned`.
+3. Add these server-only values to local `.env`, using the same Google OAuth Web client configured in Supabase:
+
+   ```bash
+   GOOGLE_CALENDAR_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+   GOOGLE_CALENDAR_CLIENT_SECRET=your-google-oauth-client-secret
+   GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY=base64-encoded-32-byte-random-key
+   ```
+
+4. Generate the encryption key with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`. Do not change it after people connect Calendar.
+5. Apply the Calendar SQL migration, restart the local app, then sign in again or choose **Connect calendar** in the header.
+
+The app encrypts the Google refresh token before storage. A successful booking creates an event in the booker's primary Calendar and sends invitations to selected attendees; edits update it and cancellation removes it. The private management link is never included in the event.
+
+### 4. Enable the Enrollment contact import
 
 In Google Cloud Console:
 
@@ -101,7 +119,7 @@ In Google Cloud Console:
 5. Keep the shared team contacts under a Google Contacts label named exactly
    `Enrollment`.
 
-### 4. Restrict company domains (optional for the first test)
+### 5. Restrict company domains (optional for the first test)
 
 To reject Google accounts outside approved company domains, add a
 comma-separated list to `.env`:
@@ -144,6 +162,7 @@ The first page is now a Google sign-in gate. After successful login:
 - Framer Motion page, card, date, slot, drawer, error, loading, and confirmation transitions
 - Reduced-motion support
 - Google sign-in with server-verified Supabase sessions
+- Google Calendar events in the signed-in booker’s primary calendar, with attendee invitations and update/cancellation notifications
 - Google-supplied booking owner name and organizer email
 - Required booking team (PLAYBOOK, O&H, or joint) and meeting title or purpose; optional attendees and notes
 - Searchable saved attendees, manual email entry, and read-only Google Contacts `Enrollment` import
@@ -170,7 +189,7 @@ Room duration rules:
 - Innovation Hub: 15-minute increments, up to 120 minutes
 - Quiet Pods: 30 or 45 minutes
 
-Profiles, roles, team management, password reset, calendar sync, and account settings are intentionally excluded from this milestone.
+Profiles, roles, team management, password reset, and account settings are intentionally excluded from this milestone.
 
 ## Recommended internal process
 
@@ -184,7 +203,7 @@ Use one shared calendar process:
 1. Choose a Sunday–Thursday date, an available room, a start time, and a
    duration.
 2. Record PLAYBOOK, O&H, or a joint booking; the meeting title; optional
-   attendees; and optional notes. Google supplies the owner name and email.
+   attendees; and optional notes. Google supplies the owner name and email, then Calendar sends attendee invitations when connected.
 3. Keep the booking reference and send the private management link to the
    meeting owner.
 4. Use that link for all edits and cancellations. The original slot is released
@@ -208,6 +227,8 @@ refetches the protected availability API.
 - `/api/realtime-config` — browser-safe Realtime URL and publishable key
 - `/api/attendees` — protected saved-attendee suggestions
 - `/api/attendees/import-google` — protected read-only Enrollment import
+- `/api/calendar/status` — protected Calendar connection status
+- `/api/calendar/connect` — saves an encrypted Calendar refresh token after Google consent
 - `/api/bookings` — create a booking
 - `/api/bookings/[token]` — view, edit, or cancel via private token
 
@@ -223,6 +244,8 @@ npm run check
 
 The API tests use an in-memory store double, not a second database. The Supabase migrations are checked for overlap, weekend, room-block, RLS, service-role, Realtime payload, and browser-configuration protections.
 The Google Contacts tests use a mock People API and do not access a real account.
+The Calendar tests use mocked Google OAuth and Calendar endpoints; they never access
+a real calendar.
 
 The optional browser suites require Chrome remote debugging and a configured local Supabase project:
 
@@ -239,7 +262,8 @@ later Vercel step.
 
 - Apply all Supabase migrations in filename order before deployment.
 - Configure `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`,
-  and optional `GOOGLE_ALLOWED_DOMAINS`.
+  optional `GOOGLE_ALLOWED_DOMAINS`, `GOOGLE_CALENDAR_CLIENT_ID`,
+  `GOOGLE_CALENDAR_CLIENT_SECRET`, and `GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY`.
 - Serve the application over HTTPS.
 - Restrict access to the intended office or team.
 - Set `PORT` and `HOST` only for local or self-hosted operation.

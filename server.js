@@ -8,6 +8,7 @@ const {
   createSupabaseClientFromEnv,
   createSupabaseStoreFromEnv
 } = require("./lib/supabase-store");
+const { createGoogleCalendarSync } = require("./lib/google-calendar");
 
 const ROOT = __dirname;
 const OPEN_HOUR = 8;
@@ -180,7 +181,8 @@ function publicBooking(row) {
     notes: row.notes,
     status: row.status,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    calendarSync: row.calendar_sync_state || "not_configured"
   };
 }
 
@@ -756,7 +758,8 @@ function createRequestHandler({
   apiOnly = false,
   environment = process.env,
   authenticateRequest,
-  googleContactsLoader
+  googleContactsLoader,
+  calendarSync
 }) {
   if (!store) throw new Error("A booking store is required.");
   const realtimeConfig = realtimeBrowserConfig(environment);
@@ -767,6 +770,8 @@ function createRequestHandler({
     googleContactsLoader ||
     ((providerToken, signedInUser) =>
       loadGoogleContactGroup(providerToken, signedInUser));
+  const googleCalendar =
+    calendarSync || createGoogleCalendarSync({ store, environment });
 
   return async function requestHandler(req, res) {
     applySecurityHeaders(res, realtimeConfig);
@@ -805,6 +810,28 @@ function createRequestHandler({
       const signedInUser = pathname.startsWith("/api/")
         ? await authenticatedGoogleUser(req, verifyAccessToken, approvedDomains)
         : null;
+
+      if (pathname === "/api/calendar/status" && req.method === "GET") {
+        return sendJSON(
+          res,
+          200,
+          await googleCalendar.status(signedInUser.id)
+        );
+      }
+
+      if (pathname === "/api/calendar/connect" && req.method === "POST") {
+        const input = await readJSON(req);
+        const calendar = await googleCalendar.connect({
+          signedInUser,
+          providerToken:
+            typeof input.providerToken === "string" ? input.providerToken : "",
+          providerRefreshToken:
+            typeof input.providerRefreshToken === "string"
+              ? input.providerRefreshToken
+              : ""
+        });
+        return sendJSON(res, 200, calendar);
+      }
 
       if (pathname === "/api/attendees" && req.method === "GET") {
         const contacts = await store.listAttendeeDirectory();
@@ -904,9 +931,14 @@ function createRequestHandler({
         } catch (error) {
           console.error("Could not remember attendee suggestions.", error);
         }
+        const calendar = await googleCalendar.createForBooking(
+          row,
+          signedInUser.id
+        );
         return sendJSON(res, 201, {
           token,
-          booking: publicBooking(row)
+          booking: publicBooking(row),
+          calendar
         });
       }
 
@@ -970,17 +1002,33 @@ function createRequestHandler({
           console.error("Could not remember attendee suggestions.", error);
         }
         const row = await store.findBookingByTokenHash(tokenHash);
-        return sendJSON(res, 200, { booking: publicBooking(row) });
+        const calendar = await googleCalendar.updateForBooking(
+          row,
+          signedInUser.id
+        );
+        return sendJSON(res, 200, {
+          booking: publicBooking(row),
+          calendar
+        });
       }
 
       if (token && req.method === "DELETE") {
         const existing = await store.findBookingByTokenHash(tokenHash);
         if (!existing) return sendError(res, 404, "Booking not found.");
+        let calendar = { state: existing.calendar_sync_state || "not_connected" };
         if (existing.status !== "cancelled") {
           await store.cancelBooking(existing.id, now().toISOString());
+          const row = await store.findBookingByTokenHash(tokenHash);
+          calendar = await googleCalendar.cancelForBooking(
+            row,
+            signedInUser.id
+          );
         }
         const row = await store.findBookingByTokenHash(tokenHash);
-        return sendJSON(res, 200, { booking: publicBooking(row) });
+        return sendJSON(res, 200, {
+          booking: publicBooking(row),
+          calendar
+        });
       }
 
       if (pathname.startsWith("/api/")) {
@@ -1049,7 +1097,8 @@ function createApp(options = {}) {
     root: options.root || ROOT,
     environment: options.environment,
     authenticateRequest: options.authenticateRequest,
-    googleContactsLoader: options.googleContactsLoader
+    googleContactsLoader: options.googleContactsLoader,
+    calendarSync: options.calendarSync
   });
   return {
     server: http.createServer(handler),

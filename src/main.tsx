@@ -44,6 +44,8 @@ const WEEKEND_CLOSED_MESSAGE =
   "Bookings are unavailable on Fridays and Saturdays.";
 const GOOGLE_CONTACTS_SCOPE =
   "https://www.googleapis.com/auth/contacts.readonly";
+const GOOGLE_CALENDAR_SCOPE =
+  "https://www.googleapis.com/auth/calendar.events.owned";
 
 interface Room {
   id: string;
@@ -88,6 +90,7 @@ interface Booking {
   notes: string;
   reference: string;
   status: "confirmed" | "cancelled";
+  calendarSync?: CalendarSyncState;
 }
 
 interface Selection {
@@ -128,6 +131,24 @@ interface AuthConfig {
   enabled: boolean;
   url?: string;
   publishableKey?: string;
+}
+
+type CalendarSyncState =
+  | "not_configured"
+  | "not_connected"
+  | "synced"
+  | "failed";
+
+interface CalendarStatus {
+  enabled: boolean;
+  connected: boolean;
+  setupRequired?: boolean;
+  email?: string;
+}
+
+interface CalendarCredentials {
+  providerToken: string;
+  providerRefreshToken: string;
 }
 
 interface AttendeeContact {
@@ -470,16 +491,27 @@ function useIsMobile(): boolean {
 interface HeaderProps {
   identity: { name: string; email: string };
   signingOut: boolean;
+  calendarStatus: CalendarStatus | null;
+  calendarConnecting: boolean;
   onHome: () => void;
+  onConnectCalendar: () => void;
   onSignOut: () => void;
 }
 
 function Header({
   identity,
   signingOut,
+  calendarStatus,
+  calendarConnecting,
   onHome,
+  onConnectCalendar,
   onSignOut,
 }: HeaderProps) {
+  const calendarLabel = calendarStatus?.connected
+    ? "Calendar connected"
+    : calendarStatus?.enabled
+      ? "Connect calendar"
+      : "Calendar setup required";
   return (
     <header className="topbar">
       <a
@@ -512,6 +544,19 @@ function Header({
             <strong>{identity.name}</strong>
             <small>{identity.email}</small>
           </span>
+          <button
+            className="calendar-connect-button"
+            type="button"
+            disabled={
+              signingOut ||
+              calendarConnecting ||
+              Boolean(calendarStatus?.connected) ||
+              !calendarStatus?.enabled
+            }
+            onClick={onConnectCalendar}
+          >
+            {calendarConnecting ? "Connecting…" : calendarLabel}
+          </button>
           <button
             className="sign-out-button"
             type="button"
@@ -2502,6 +2547,11 @@ function App() {
       window.sessionStorage.getItem("playbook-google-provider-token") ||
       "",
   );
+  const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(
+    null,
+  );
+  const [calendarCredentials, setCalendarCredentials] = useState<CalendarCredentials | null>(null);
+  const [calendarConnecting, setCalendarConnecting] = useState(false);
   const [selection, setSelection] = useState<Selection>({
     date: initialDate,
     room: "",
@@ -2575,17 +2625,35 @@ function App() {
             window.sessionStorage.getItem(
               "playbook-google-contacts-requested",
             ) === "1";
+          const calendarRequested = window.sessionStorage.getItem(
+            "playbook-google-calendar-requested",
+          ) === "1";
           if (session?.provider_token && contactsRequested) {
             window.sessionStorage.setItem(
               "playbook-google-provider-token",
               session.provider_token,
             );
             setGoogleProviderToken(session.provider_token);
+          }
+          if (
+            session?.provider_token &&
+            session.provider_refresh_token &&
+            calendarRequested
+          ) {
+            setCalendarCredentials({
+              providerToken: session.provider_token,
+              providerRefreshToken: session.provider_refresh_token,
+            });
           } else if (!session) {
             window.sessionStorage.removeItem(
               "playbook-google-provider-token",
             );
+            window.sessionStorage.removeItem(
+              "playbook-google-calendar-requested",
+            );
             setGoogleProviderToken("");
+            setCalendarCredentials(null);
+            setCalendarStatus(null);
           }
           if (session) setAuthError("");
         };
@@ -2630,6 +2698,52 @@ function App() {
     const timeout = window.setTimeout(() => setToast(null), 2800);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (authStatus !== "signedIn") return;
+    let active = true;
+    void api<CalendarStatus>("/api/calendar/status")
+      .then((status) => {
+        if (active) setCalendarStatus(status);
+      })
+      .catch(() => {
+        if (active) setCalendarStatus(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authStatus]);
+
+  const connectGoogleCalendar = useCallback(
+    async (credentials: CalendarCredentials) => {
+      setCalendarConnecting(true);
+      try {
+        const status = await api<CalendarStatus>("/api/calendar/connect", {
+          method: "POST",
+          body: JSON.stringify(credentials),
+        });
+        setCalendarStatus(status);
+        showToast("Google Calendar connected. Future bookings will send invitations.");
+      } catch (error) {
+        showToast((error as ApiError).message);
+      } finally {
+        window.sessionStorage.removeItem(
+          "playbook-google-calendar-requested",
+        );
+        setCalendarCredentials(null);
+        setCalendarConnecting(false);
+      }
+    },
+    [showToast],
+  );
+
+  useEffect(() => {
+    if (authStatus !== "signedIn" || !calendarCredentials) return;
+    const timeout = window.setTimeout(() => {
+      void connectGoogleCalendar(calendarCredentials);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [authStatus, calendarCredentials, connectGoogleCalendar]);
 
   const loadAttendeeContacts = useCallback(async () => {
     setAttendeeContactsLoading(true);
@@ -3204,7 +3318,11 @@ function App() {
     setFormError("");
     try {
       const token = editingToken;
-      const result = await api<{ token?: string; booking: Booking }>(
+      const result = await api<{
+        token?: string;
+        booking: Booking;
+        calendar?: { state: CalendarSyncState };
+      }>(
         token ? `/api/bookings/${token}` : "/api/bookings",
         {
           method: token ? "PUT" : "POST",
@@ -3226,6 +3344,13 @@ function App() {
       setRouteLoading(false);
       setPage("manage");
       setCopied(false);
+      if (result.calendar?.state === "synced") {
+        showToast("Google Calendar has been updated and invitations were sent.");
+      } else if (result.calendar?.state === "not_connected") {
+        showToast("Booking saved. Connect Google Calendar to send invitations.");
+      } else if (result.calendar?.state === "failed") {
+        showToast("Booking saved, but Google Calendar needs reconnecting before it can sync.");
+      }
       if (token) {
         history.replaceState({}, "", `/booking/${nextToken}`);
       } else {
@@ -3312,11 +3437,19 @@ function App() {
     }
     setCancelling(true);
     try {
-      const result = await api<{ booking: Booking }>(
+      const result = await api<{
+        booking: Booking;
+        calendar?: { state: CalendarSyncState };
+      }>(
         `/api/bookings/${managementToken}`,
         { method: "DELETE" },
       );
       setManagedBooking(result.booking);
+      if (result.calendar?.state === "synced") {
+        showToast("Booking cancelled and the Google Calendar event was removed.");
+      } else if (result.calendar?.state === "failed") {
+        showToast("Booking cancelled, but Google Calendar needs reconnecting to remove the event.");
+      }
     } catch (error) {
       showToast((error as ApiError).message);
     } finally {
@@ -3415,16 +3548,59 @@ function App() {
     }
   };
 
+  const requestCalendarConnection = async () => {
+    if (!authClient || calendarConnecting) return;
+    setAuthError("");
+    window.sessionStorage.setItem(
+      "playbook-google-calendar-requested",
+      "1",
+    );
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const { error } = await authClient.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo,
+        scopes: GOOGLE_CALENDAR_SCOPE,
+        queryParams: {
+          access_type: "offline",
+          include_granted_scopes: "true",
+          prompt: "consent",
+        },
+      },
+    });
+    if (error) {
+      window.sessionStorage.removeItem(
+        "playbook-google-calendar-requested",
+      );
+      setAuthError(error.message);
+    }
+  };
+
   const signInWithGoogle = async () => {
     if (!authClient) return;
     setAuthBusy(true);
     setAuthError("");
+    window.sessionStorage.setItem(
+      "playbook-google-calendar-requested",
+      "1",
+    );
     const redirectTo = `${window.location.origin}${window.location.pathname}`;
     const { error } = await authClient.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo },
+      options: {
+        redirectTo,
+        scopes: GOOGLE_CALENDAR_SCOPE,
+        queryParams: {
+          access_type: "offline",
+          include_granted_scopes: "true",
+          prompt: "consent",
+        },
+      },
     });
     if (error) {
+      window.sessionStorage.removeItem(
+        "playbook-google-calendar-requested",
+      );
       setAuthError(error.message);
       setAuthBusy(false);
     }
@@ -3446,7 +3622,12 @@ function App() {
     window.sessionStorage.removeItem(
       "playbook-google-contacts-requested",
     );
+    window.sessionStorage.removeItem(
+      "playbook-google-calendar-requested",
+    );
     setGoogleProviderToken("");
+    setCalendarCredentials(null);
+    setCalendarStatus(null);
     setAttendeeContacts([]);
     setAuthUser(null);
     setAuthStatus("signedOut");
@@ -3487,7 +3668,10 @@ function App() {
         <Header
           identity={signedInIdentity}
           signingOut={authBusy}
+          calendarStatus={calendarStatus}
+          calendarConnecting={calendarConnecting}
           onHome={() => resetBookingFlow("push")}
+          onConnectCalendar={() => void requestCalendarConnection()}
           onSignOut={() => void signOut()}
         />
         <main>

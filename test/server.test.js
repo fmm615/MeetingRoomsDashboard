@@ -11,6 +11,12 @@ const {
 } = require("../server");
 const { ROOM_CONFIGURATIONS } = require("../room-config");
 const {
+  createGoogleCalendarSync,
+  decryptRefreshToken,
+  encryptRefreshToken,
+  calendarEventPayload
+} = require("../lib/google-calendar");
+const {
   createSupabaseClientFromEnv,
   normalizeBookingRow
 } = require("../lib/supabase-store");
@@ -831,6 +837,218 @@ test("Postgres migration enforces conflicts, workweek rules, and server-only acc
   assert.match(
     capacityUpgrade,
     /before insert or update of room_id, attendees/i
+  );
+
+  const calendarUpgrade = fs.readFileSync(
+    path.join(
+      __dirname, "..", "supabase", "migrations",
+      "20260729060000_add_google_calendar_sync.sql"
+    ),
+    "utf8"
+  );
+  assert.match(
+    calendarUpgrade,
+    /create table if not exists public\.google_calendar_connections/i
+  );
+  assert.match(calendarUpgrade, /refresh_token_ciphertext/i);
+  assert.match(calendarUpgrade, /enable row level security/i);
+  assert.match(
+    calendarUpgrade,
+    /revoke all[\s\S]*from public, anon, authenticated/i
+  );
+  assert.match(calendarUpgrade, /calendar_event_id/i);
+  assert.match(calendarUpgrade, /calendar_sync_state/i);
+});
+
+test("Google Calendar sync creates, updates, and removes attendee invitations", async () => {
+  const encryptionKey = Buffer.alloc(32, 7).toString("base64");
+  const connections = new Map();
+  const states = [];
+  const requests = [];
+  const store = {
+    async getCalendarConnection(userId) {
+      return connections.get(userId) || null;
+    },
+    async upsertCalendarConnection(value) {
+      connections.set(value.userId, {
+        user_id: value.userId,
+        google_email: value.email,
+        refresh_token_ciphertext: value.refreshTokenCiphertext
+      });
+    },
+    async updateBookingCalendarSync(id, value) {
+      states.push({ id, ...value });
+    }
+  };
+  const fetchImpl = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    if (String(url).includes("userinfo")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { email: TEST_GOOGLE_USER.email };
+        }
+      };
+    }
+    if (String(url).includes("oauth2.googleapis.com/token")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { access_token: "calendar-access-token" };
+        }
+      };
+    }
+    return {
+      ok: true,
+      status: options.method === "DELETE" ? 204 : 200,
+      async json() {
+        return { id: "pbrm1" };
+      }
+    };
+  };
+  const calendar = createGoogleCalendarSync({
+    store,
+    environment: {
+      GOOGLE_CALENDAR_CLIENT_ID: "calendar-client-id",
+      GOOGLE_CALENDAR_CLIENT_SECRET: "calendar-client-secret",
+      GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY: encryptionKey
+    },
+    fetchImpl,
+    logger: { error() {} }
+  });
+
+  const connected = await calendar.connect({
+    signedInUser: { id: TEST_GOOGLE_USER.id, email: TEST_GOOGLE_USER.email },
+    providerToken: "google-provider-token-for-calendar-scope",
+    providerRefreshToken: "google-provider-refresh-token-for-calendar-scope"
+  });
+  assert.deepEqual(connected, {
+    enabled: true,
+    connected: true,
+    email: TEST_GOOGLE_USER.email
+  });
+  const stored = connections.get(TEST_GOOGLE_USER.id);
+  assert.doesNotMatch(stored.refresh_token_ciphertext, /refresh-token-for-calendar/i);
+  assert.equal(
+    decryptRefreshToken(stored.refresh_token_ciphertext, Buffer.alloc(32, 7)),
+    "google-provider-refresh-token-for-calendar-scope"
+  );
+  assert.equal(
+    decryptRefreshToken(
+      encryptRefreshToken("another-refresh-token", Buffer.alloc(32, 7)),
+      Buffer.alloc(32, 7)
+    ),
+    "another-refresh-token"
+  );
+
+  const booking = {
+    id: 42,
+    reference: "PB-1234ABCD",
+    room_name: "Meeting Room",
+    room_location: "",
+    booking_date: "2026-07-30",
+    start_slot: 8,
+    end_slot: 12,
+    organizer_group: "PLAYBOOK",
+    attendees: "sara@playbook.test, ahmed@oh.test, mahmood@playbook.test",
+    title: "Product review",
+    email: TEST_GOOGLE_USER.email,
+    notes: "Bring the latest plan.",
+    calendar_event_id: "",
+    calendar_owner_id: ""
+  };
+  const payload = calendarEventPayload(booking);
+  assert.equal(payload.start.dateTime, "2026-07-30T10:00:00+03:00");
+  assert.equal(payload.end.dateTime, "2026-07-30T11:00:00+03:00");
+  assert.deepEqual(payload.attendees, [
+    { email: "sara@playbook.test" },
+    { email: "ahmed@oh.test" }
+  ]);
+  assert.equal(payload.guestsCanSeeOtherGuests, false);
+  assert.doesNotMatch(JSON.stringify(payload), /booking\/[a-f0-9]{48}/i);
+
+  assert.deepEqual(
+    await calendar.createForBooking(booking, TEST_GOOGLE_USER.id),
+    { state: "synced" }
+  );
+  booking.calendar_event_id = "pbrm1a";
+  booking.calendar_owner_id = TEST_GOOGLE_USER.id;
+  assert.deepEqual(
+    await calendar.updateForBooking(booking, TEST_GOOGLE_USER.id),
+    { state: "synced" }
+  );
+  assert.deepEqual(
+    await calendar.cancelForBooking(booking, TEST_GOOGLE_USER.id),
+    { state: "synced" }
+  );
+  const calendarRequests = requests.filter((request) =>
+    request.url.includes("www.googleapis.com/calendar/v3")
+  );
+  assert.equal(calendarRequests[0].options.method, "POST");
+  assert.match(calendarRequests[0].url, /sendUpdates=all/);
+  assert.equal(calendarRequests[1].options.method, "PUT");
+  assert.equal(calendarRequests[2].options.method, "DELETE");
+  assert.equal(states.at(-1).state, "synced");
+});
+
+test("booking lifecycle delegates Calendar create, update, and cancellation", async t => {
+  const calls = [];
+  const calendarSync = {
+    async status(userId) {
+      calls.push({ action: "status", userId });
+      return { enabled: true, connected: true, email: TEST_GOOGLE_USER.email };
+    },
+    async connect(value) {
+      calls.push({ action: "connect", value });
+      return { enabled: true, connected: true, email: TEST_GOOGLE_USER.email };
+    },
+    async createForBooking(booking, userId) {
+      calls.push({ action: "create", booking, userId });
+      return { state: "synced" };
+    },
+    async updateForBooking(booking, userId) {
+      calls.push({ action: "update", booking, userId });
+      return { state: "synced" };
+    },
+    async cancelForBooking(booking, userId) {
+      calls.push({ action: "cancel", booking, userId });
+      return { state: "synced" };
+    }
+  };
+  const app = await fixture({ calendarSync });
+  t.after(app.close);
+
+  const status = await app.request("/api/calendar/status");
+  assert.equal(status.response.status, 200);
+  assert.equal(status.body.connected, true);
+  const connected = await app.request("/api/calendar/connect", {
+    method: "POST",
+    body: JSON.stringify({
+      providerToken: "provider-token",
+      providerRefreshToken: "provider-refresh-token"
+    })
+  });
+  assert.equal(connected.response.status, 200);
+
+  const created = await createBooking(app);
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.calendar.state, "synced");
+  const token = created.body.token;
+  const updated = await app.request(`/api/bookings/${token}`, {
+    method: "PUT",
+    body: JSON.stringify({ ...BASE_BOOKING, title: "Updated review" })
+  });
+  assert.equal(updated.response.status, 200);
+  const cancelled = await app.request(`/api/bookings/${token}`, {
+    method: "DELETE"
+  });
+  assert.equal(cancelled.response.status, 200);
+  await app.request(`/api/bookings/${token}`, { method: "DELETE" });
+  assert.deepEqual(
+    calls.map((call) => call.action),
+    ["status", "connect", "create", "update", "cancel"]
   );
 });
 
