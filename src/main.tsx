@@ -493,7 +493,9 @@ interface HeaderProps {
   signingOut: boolean;
   calendarStatus: CalendarStatus | null;
   calendarConnecting: boolean;
+  hasBookingShortcut: boolean;
   onHome: () => void;
+  onViewBooking: () => void;
   onConnectCalendar: () => void;
   onSignOut: () => void;
 }
@@ -503,7 +505,9 @@ function Header({
   signingOut,
   calendarStatus,
   calendarConnecting,
+  hasBookingShortcut,
   onHome,
+  onViewBooking,
   onConnectCalendar,
   onSignOut,
 }: HeaderProps) {
@@ -557,6 +561,15 @@ function Header({
           >
             {calendarConnecting ? "Connecting…" : calendarLabel}
           </button>
+          {hasBookingShortcut && (
+            <button
+              className="calendar-connect-button"
+              type="button"
+              onClick={onViewBooking}
+            >
+              View my booking
+            </button>
+          )}
           <button
             className="sign-out-button"
             type="button"
@@ -1510,7 +1523,11 @@ function AttendeeSelector({
   onImport,
 }: AttendeeSelectorProps) {
   const [query, setQuery] = useState("");
-  const [focused, setFocused] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const comboboxRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [inputError, setInputError] = useState("");
   const selected = useMemo(
     () => attendeeEmails(draft.attendees),
@@ -1541,6 +1558,55 @@ function AttendeeSelector({
     [contacts, normalizedQuery, selectedSet],
   );
 
+  const manualEmail = useMemo(() => {
+    if (
+      !normalizedQuery ||
+      !validAttendeeEmail(normalizedQuery) ||
+      selectedSet.has(normalizedQuery) ||
+      contacts.some((contact) => contact.email === normalizedQuery)
+    ) {
+      return "";
+    }
+    return normalizedQuery;
+  }, [contacts, normalizedQuery, selectedSet]);
+
+  const options = useMemo(
+    () => [
+      ...suggestions.map((contact) => ({
+        email: contact.email,
+        name: contact.name,
+        manual: false,
+      })),
+      ...(manualEmail ? [{ email: manualEmail, name: "", manual: true }] : []),
+    ],
+    [manualEmail, suggestions],
+  );
+
+  const closeMenu = (restoreFocus = false) => {
+    setOpen(false);
+    setActiveIndex(-1);
+    if (restoreFocus) window.setTimeout(() => triggerRef.current?.focus(), 0);
+  };
+
+  const openMenu = () => {
+    if (capacityReached) return;
+    setOpen(true);
+    setActiveIndex(-1);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const focusTimer = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!comboboxRef.current?.contains(event.target as Node)) closeMenu();
+    };
+    document.addEventListener("pointerdown", closeOnPointerDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener("pointerdown", closeOnPointerDown);
+    };
+  }, [open]);
+
   const saveSelected = (emails: string[]) => {
     onDraft({ ...draft, attendees: emails.join(", ") });
   };
@@ -1548,25 +1614,26 @@ function AttendeeSelector({
   const addEmail = (rawValue: string) => {
     if (capacityReached) {
       setInputError("Room capacity reached. Remove an attendee before adding another.");
-      return;
+      return false;
     }
     const email = rawValue.trim().toLowerCase();
     if (!validAttendeeEmail(email)) {
       setInputError("Enter a complete email address.");
-      return;
+      return false;
     }
     if (selectedSet.has(email)) {
       setInputError("That attendee is already selected.");
-      return;
+      return false;
     }
     const next = [...selected, email];
     if (next.length > 30 || next.join(", ").length > 500) {
       setInputError("You can select up to 30 attendee emails.");
-      return;
+      return false;
     }
     saveSelected(next);
     setQuery("");
     setInputError("");
+    return true;
   };
 
   const removeEmail = (email: string) => {
@@ -1577,7 +1644,7 @@ function AttendeeSelector({
   return (
     <div className="attendee-field">
       <div className="attendee-label-row">
-        <label htmlFor="attendee-search">Attendees</label>
+        <label id="attendee-label">Attendees</label>
         <span>Optional</span>
       </div>
       <input type="hidden" name="attendees" value={draft.attendees} />
@@ -1603,69 +1670,125 @@ function AttendeeSelector({
           })}
         </div>
       )}
-      <div className="attendee-combobox">
-        <div className="attendee-input-row">
-          <input
-            id="attendee-search"
-            type="email"
-            inputMode="email"
-            autoComplete="off"
-            placeholder={
-              capacityReached
-                ? "Room capacity reached"
-                : "Search a saved contact or enter an email"
+      <div className="attendee-combobox" ref={comboboxRef}>
+        <button
+          ref={triggerRef}
+          id="attendee-selector"
+          className="attendee-trigger"
+          type="button"
+          role="combobox"
+          aria-labelledby="attendee-label"
+          aria-describedby="attendee-help attendee-capacity"
+          aria-controls="attendee-options"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          disabled={capacityReached}
+          onClick={() => (open ? closeMenu() : openMenu())}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openMenu();
             }
-            disabled={capacityReached}
-            value={query}
-            aria-autocomplete="list"
-            aria-expanded={focused && suggestions.length > 0}
-            aria-controls="attendee-suggestions"
-            aria-describedby="attendee-help attendee-capacity"
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setInputError("");
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" ||
-                (event.key === "," && query.trim())
-              ) {
-                event.preventDefault();
-                addEmail(query);
-              }
-            }}
-          />
-          <button
-            className="attendee-add-button"
-            type="button"
-            disabled={!query.trim() || capacityReached}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => addEmail(query)}
-          >
-            Add
-          </button>
-        </div>
-        {focused && suggestions.length > 0 && (
-          <div
-            className="attendee-suggestions"
-            id="attendee-suggestions"
-            role="listbox"
-          >
-            {suggestions.map((contact) => (
-              <button
-                type="button"
-                role="option"
-                aria-selected="false"
-                key={contact.email}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => addEmail(contact.email)}
-              >
-                <strong>{contact.name || contact.email}</strong>
-                {contact.name && <span>{contact.email}</span>}
-              </button>
-            ))}
+            if (event.key === "Escape") closeMenu();
+          }}
+        >
+          <span>
+            {capacityReached
+              ? "Room capacity reached"
+              : selected.length
+                ? "Add another attendee"
+                : "Select attendees"}
+          </span>
+          <span className="attendee-chevron" aria-hidden="true">⌄</span>
+        </button>
+        {open && (
+          <div className="attendee-popover">
+            <div className="attendee-search-wrap">
+              <input
+                ref={searchInputRef}
+                id="attendee-search"
+                className="attendee-search-input"
+                type="text"
+                inputMode="email"
+                autoComplete="off"
+                placeholder="Search by name or email, or enter an email..."
+                value={query}
+                role="combobox"
+                aria-label="Search attendees"
+                aria-autocomplete="list"
+                aria-expanded="true"
+                aria-controls="attendee-options"
+                aria-activedescendant={
+                  activeIndex >= 0 ? `attendee-option-${activeIndex}` : undefined
+                }
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setActiveIndex(-1);
+                  setInputError("");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeMenu(true);
+                    return;
+                  }
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    if (options.length) {
+                      setActiveIndex((current) => {
+                        const next = current + (event.key === "ArrowDown" ? 1 : -1);
+                        return (next + options.length) % options.length;
+                      });
+                    }
+                    return;
+                  }
+                  if (event.key === "Enter" || (event.key === "," && query.trim())) {
+                    event.preventDefault();
+                    const option = activeIndex >= 0 ? options[activeIndex] : undefined;
+                    if (option) {
+                      addEmail(option.email);
+                    } else if (manualEmail) {
+                      addEmail(manualEmail);
+                    } else if (options[0]) {
+                      addEmail(options[0].email);
+                    } else if (query.trim()) {
+                      addEmail(query);
+                    }
+                    setActiveIndex(-1);
+                  }
+                }}
+              />
+            </div>
+            <div className="attendee-options" id="attendee-options" role="listbox" aria-label="Attendee results">
+              {options.length ? (
+                options.map((option, index) => (
+                  <button
+                    id={`attendee-option-${index}`}
+                    className={activeIndex === index ? "active" : ""}
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    key={option.email}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      addEmail(option.email);
+                      setActiveIndex(-1);
+                    }}
+                  >
+                    {option.manual ? (
+                      <strong>Add “{option.email}”</strong>
+                    ) : (
+                      <>
+                        <strong>{option.name || option.email}</strong>
+                        {option.name && <span>{option.email}</span>}
+                      </>
+                    )}
+                  </button>
+                ))
+              ) : (
+                <p className="attendee-no-results">No matching contacts. Enter a complete email to add it.</p>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -2344,12 +2467,12 @@ function Confirmation({
       </motion.div>
       {!cancelled && (
         <motion.div className="private-link" variants={variants.confirmationItem}>
-          <label htmlFor="private-link-input">Private management link</label>
           <div className="private-link-row">
             <input
               id="private-link-input"
               type="text"
               readOnly
+              aria-label="Private management link"
               aria-describedby="private-link-note"
               value={`${window.location.origin}/booking/${token}`}
             />
@@ -2369,6 +2492,17 @@ function Confirmation({
         className="confirmation-actions"
         variants={variants.confirmationItem}
       >
+        {!cancelled && (
+          <motion.button
+            type="button"
+            className="primary-button"
+            id="back-to-availability"
+            onClick={onNew}
+            {...buttonMotion(reduced)}
+          >
+            Back to availability
+          </motion.button>
+        )}
         {cancelled ? (
           <motion.button
             type="button"
@@ -2905,7 +3039,10 @@ function App() {
   }, []);
 
   const resetBookingFlow = useCallback(
-    (historyMode: "push" | "replace" | "none" = "none") => {
+    (
+      historyMode: "push" | "replace" | "none" = "none",
+      retainCurrentBooking = false,
+    ) => {
       const windowAnchor = dateBounds().minimum;
       const nextDate = nextBookableDate(windowAnchor);
       if (historyMode === "push") history.pushState({}, "", "/book");
@@ -2914,9 +3051,11 @@ function App() {
       setDateWindowAnchor(windowAnchor);
       setBusy([]);
       setEditingToken(null);
-      setManagedBooking(null);
       setManagedError("");
-      setManagementToken("");
+      if (!retainCurrentBooking) {
+        setManagedBooking(null);
+        setManagementToken("");
+      }
       setDialog(null);
       const identity = identityFromUser(authUser);
       setDraft({
@@ -3670,7 +3809,13 @@ function App() {
           signingOut={authBusy}
           calendarStatus={calendarStatus}
           calendarConnecting={calendarConnecting}
+          hasBookingShortcut={Boolean(managementToken) && page !== "manage"}
           onHome={() => resetBookingFlow("push")}
+          onViewBooking={() => {
+            if (!managementToken) return;
+            history.pushState({}, "", `/booking/${managementToken}`);
+            void loadManagedBooking(managementToken);
+          }}
           onConnectCalendar={() => void requestCalendarConnection()}
           onSignOut={() => void signOut()}
         />
@@ -3735,7 +3880,7 @@ function App() {
                       onCopy={() => void copyPrivateLink()}
                       onEdit={() => void editBooking()}
                       onCancel={() => void cancelBooking()}
-                      onNew={() => resetBookingFlow("push")}
+                      onNew={() => resetBookingFlow("push", true)}
                     />
                   </AnimatePresence>
                 ) : (
