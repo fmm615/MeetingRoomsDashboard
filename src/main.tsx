@@ -42,8 +42,6 @@ const START_SLOTS = Array.from(
 const BOOKING_WINDOW_DAYS = 14;
 const WEEKEND_CLOSED_MESSAGE =
   "Bookings are unavailable on Fridays and Saturdays.";
-const GOOGLE_CONTACTS_SCOPE =
-  "https://www.googleapis.com/auth/contacts.readonly";
 const GOOGLE_CALENDAR_SCOPE =
   "https://www.googleapis.com/auth/calendar.events.owned " +
   "https://www.googleapis.com/auth/calendar.events.freebusy";
@@ -1531,12 +1529,10 @@ function LoadingButtonLabel({
 interface AttendeeSelectorProps {
   contacts: AttendeeContact[];
   loading: boolean;
-  importing: boolean;
   directoryError: string;
   maximumCapacity: number | null;
   draft: BookingDraft;
   onDraft: (next: BookingDraft) => void;
-  onImport: () => void;
 }
 
 // The closed control is a select-style trigger; search and manual-email
@@ -1544,12 +1540,10 @@ interface AttendeeSelectorProps {
 function AttendeeSelector({
   contacts,
   loading,
-  importing,
   directoryError,
   maximumCapacity,
   draft,
   onDraft,
-  onImport,
 }: AttendeeSelectorProps) {
   const [query, setQuery] = useState("");
   const reduced = Boolean(useReducedMotion());
@@ -1844,17 +1838,9 @@ function AttendeeSelector({
           {loading
             ? "Loading saved contacts…"
             : contacts.length
-              ? `${contacts.length} saved contacts — search or scroll to see everyone. Manual emails are remembered too.`
+              ? `${contacts.length} team contacts — select from the directory or enter any work email.`
               : "No saved contacts yet. You can enter an email manually."}
         </p>
-        <button
-          type="button"
-          className="attendee-import-button"
-          disabled={importing}
-          onClick={onImport}
-        >
-          {importing ? "Importing…" : "Import/refresh Enrollment"}
-        </button>
       </div>
       <p
         className={`attendee-capacity ${capacityReached ? "reached" : ""}`}
@@ -1887,7 +1873,6 @@ interface DetailsDrawerProps {
   identityLocked: boolean;
   attendeeContacts: AttendeeContact[];
   attendeeContactsLoading: boolean;
-  attendeeImporting: boolean;
   attendeeDirectoryError: string;
   editing: boolean;
   submitting: boolean;
@@ -1901,7 +1886,6 @@ interface DetailsDrawerProps {
   onChooseStart: (slot: number) => void;
   onChooseDuration: (duration: number) => void;
   onRetryAvailability: () => void;
-  onImportAttendees: () => void;
   onClose: () => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
 }
@@ -1917,7 +1901,6 @@ function DetailsDrawer({
   identityLocked,
   attendeeContacts,
   attendeeContactsLoading,
-  attendeeImporting,
   attendeeDirectoryError,
   editing,
   submitting,
@@ -1931,7 +1914,6 @@ function DetailsDrawer({
   onChooseStart,
   onChooseDuration,
   onRetryAvailability,
-  onImportAttendees,
   onClose,
   onSubmit,
 }: DetailsDrawerProps) {
@@ -2238,12 +2220,10 @@ function DetailsDrawer({
             <AttendeeSelector
               contacts={attendeeContacts}
               loading={attendeeContactsLoading}
-              importing={attendeeImporting}
               directoryError={attendeeDirectoryError}
               maximumCapacity={room?.maximumCapacity ?? null}
               draft={draft}
               onDraft={onDraft}
-              onImport={onImportAttendees}
             />
             <label>
               Notes <small>Optional</small>
@@ -2751,12 +2731,6 @@ function App() {
   const [attendeeContactsLoading, setAttendeeContactsLoading] =
     useState(false);
   const [attendeeDirectoryError, setAttendeeDirectoryError] = useState("");
-  const [attendeeImporting, setAttendeeImporting] = useState(false);
-  const [googleProviderToken, setGoogleProviderToken] = useState(
-    () =>
-      window.sessionStorage.getItem("playbook-google-provider-token") ||
-      "",
-  );
   const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(
     null,
   );
@@ -2833,20 +2807,9 @@ function App() {
           apiAccessToken = session?.access_token || "";
           setAuthUser(session?.user || null);
           setAuthStatus(session ? "signedIn" : "signedOut");
-          const contactsRequested =
-            window.sessionStorage.getItem(
-              "playbook-google-contacts-requested",
-            ) === "1";
           const calendarRequested = window.sessionStorage.getItem(
             "playbook-google-calendar-requested",
           ) === "1";
-          if (session?.provider_token && contactsRequested) {
-            window.sessionStorage.setItem(
-              "playbook-google-provider-token",
-              session.provider_token,
-            );
-            setGoogleProviderToken(session.provider_token);
-          }
           if (
             session?.provider_token &&
             session.provider_refresh_token &&
@@ -2858,12 +2821,8 @@ function App() {
             });
           } else if (!session) {
             window.sessionStorage.removeItem(
-              "playbook-google-provider-token",
-            );
-            window.sessionStorage.removeItem(
               "playbook-google-calendar-requested",
             );
-            setGoogleProviderToken("");
             setCalendarCredentials(null);
             setCalendarStatus(null);
           }
@@ -3739,80 +3698,6 @@ function App() {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
-  const importEnrollmentContacts = useCallback(
-    async (providerToken: string) => {
-      if (!providerToken || attendeeImporting) return;
-      setAttendeeImporting(true);
-      setAttendeeDirectoryError("");
-      try {
-        const result = await api<{
-          imported: number;
-          group: string;
-        }>("/api/attendees/import-google", {
-          method: "POST",
-          body: JSON.stringify({ providerToken }),
-        });
-        await loadAttendeeContacts();
-        showToast(
-          result.imported
-            ? `Imported ${result.imported} contacts from ${result.group}.`
-            : `${result.group} has no contacts to import.`,
-        );
-      } catch (error) {
-        setAttendeeDirectoryError((error as ApiError).message);
-      } finally {
-        window.sessionStorage.removeItem(
-          "playbook-google-provider-token",
-        );
-        window.sessionStorage.removeItem(
-          "playbook-google-contacts-requested",
-        );
-        setGoogleProviderToken("");
-        setAttendeeImporting(false);
-      }
-    },
-    [attendeeImporting, loadAttendeeContacts, showToast],
-  );
-
-  useEffect(() => {
-    if (authStatus !== "signedIn" || !googleProviderToken) return;
-    const timeout = window.setTimeout(() => {
-      void importEnrollmentContacts(googleProviderToken);
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [
-    authStatus,
-    googleProviderToken,
-    importEnrollmentContacts,
-  ]);
-
-  const requestEnrollmentContacts = async () => {
-    if (!authClient || attendeeImporting) return;
-    setAttendeeDirectoryError("");
-    window.sessionStorage.setItem(
-      "playbook-google-contacts-requested",
-      "1",
-    );
-    const redirectTo = `${window.location.origin}${window.location.pathname}`;
-    const { error } = await authClient.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo,
-        scopes: GOOGLE_CONTACTS_SCOPE,
-        queryParams: {
-          include_granted_scopes: "true",
-          prompt: "consent",
-        },
-      },
-    });
-    if (error) {
-      window.sessionStorage.removeItem(
-        "playbook-google-contacts-requested",
-      );
-      setAttendeeDirectoryError(error.message);
-    }
-  };
-
   const requestCalendarConnection = async () => {
     if (!authClient || calendarConnecting) return;
     setAuthError("");
@@ -3882,15 +3767,8 @@ function App() {
     }
     apiAccessToken = "";
     window.sessionStorage.removeItem(
-      "playbook-google-provider-token",
-    );
-    window.sessionStorage.removeItem(
-      "playbook-google-contacts-requested",
-    );
-    window.sessionStorage.removeItem(
       "playbook-google-calendar-requested",
     );
-    setGoogleProviderToken("");
     setCalendarCredentials(null);
     setCalendarStatus(null);
     setAttendeeContacts([]);
@@ -4050,7 +3928,6 @@ function App() {
         identityLocked
         attendeeContacts={attendeeContacts}
         attendeeContactsLoading={attendeeContactsLoading}
-        attendeeImporting={attendeeImporting}
         attendeeDirectoryError={attendeeDirectoryError}
         editing={Boolean(editingToken)}
         submitting={submitting}
@@ -4074,7 +3951,6 @@ function App() {
         onRetryAvailability={() =>
           void loadAvailability(selection.date, editingToken)
         }
-        onImportAttendees={() => void requestEnrollmentContacts()}
         onClose={closeDetails}
         onSubmit={(event) => void confirmBooking(event)}
       />

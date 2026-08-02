@@ -1134,63 +1134,32 @@ test("Google Contacts loader imports only valid Enrollment members", async () =>
   );
 });
 
-test("attendee directory supports solo bookings, remembered emails, and Enrollment imports", async t => {
-  const googleContactsLoader = async (providerToken, signedInUser) => {
-    assert.equal(providerToken, "google-provider-token-with-contacts-scope");
-    assert.equal(signedInUser.email, TEST_GOOGLE_USER.email);
-    return [
-      { name: "Sara", email: "sara@playbook.test" },
-      { name: "Fatima", email: "fatima@oh.test" }
-    ];
-  };
-  const app = await fixture({ googleContactsLoader });
+test("manual invitees become permanent saved attendee suggestions", async t => {
+  const app = await fixture();
   t.after(app.close);
 
   const initial = await app.request("/api/attendees");
   assert.equal(initial.response.status, 200);
   assert.deepEqual(initial.body.contacts, []);
 
-  const solo = await createBooking(app, {
+  const booking = await createBooking(app, {
     ...BASE_BOOKING,
-    attendees: ""
+    attendees: "someone@outside-team.test"
   });
-  assert.equal(solo.response.status, 201);
-  assert.deepEqual((await app.request("/api/attendees")).body.contacts, []);
-
-  const teamBooking = await createBooking(app, {
-    ...BASE_BOOKING,
-    date: "2026-07-29",
-    attendees: "sara@playbook.test, ahmed@oh.test"
-  });
-  assert.equal(teamBooking.response.status, 201);
-  assert.equal(
-    (await app.request("/api/attendees")).body.contacts.length,
-    2
-  );
-
-  const imported = await app.request("/api/attendees/import-google", {
-    method: "POST",
-    body: JSON.stringify({
-      providerToken: "google-provider-token-with-contacts-scope"
-    })
-  });
-  assert.equal(imported.response.status, 200);
-  assert.equal(imported.body.group, "Enrollment");
-  assert.equal(imported.body.imported, 2);
-
-  const directory = (await app.request("/api/attendees")).body.contacts;
-  assert.deepEqual(
-    directory.map(contact => contact.email),
-    ["ahmed@oh.test", "fatima@oh.test", "sara@playbook.test"]
-  );
-  assert.deepEqual(
-    directory.find(contact => contact.email === "sara@playbook.test"),
+  assert.equal(booking.response.status, 201);
+  assert.deepEqual((await app.request("/api/attendees")).body.contacts, [
     {
-      email: "sara@playbook.test",
-      name: "Sara",
-      source: "google"
-    }
-  );
+      email: "someone@outside-team.test",
+      name: "",
+      source: "manual",
+    },
+  ]);
+
+  const importAttempt = await app.request("/api/attendees/import-google", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  assert.equal(importAttempt.response.status, 410);
 
   const anonymous = await app.request("/api/attendees", {
     authenticated: false

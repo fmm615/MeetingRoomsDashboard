@@ -33,19 +33,19 @@ permissions. The participant migration safely upgrades projects that already
 applied the initial schema. The availability-broadcast migration adds
 privacy-safe Realtime invalidation events for bookings and room blocks.
 The attendee-directory migration makes attendees optional and creates a
-server-only shared directory for Enrollment imports and previously used
-attendee emails. The Google Calendar migration adds encrypted, server-only
-Google refresh-token storage and Calendar event references for bookings.
+server-only shared directory. The approved-team migration replaces existing
+saved contacts with the curated Playbook and O&H attendee list. The Google
+Calendar migration adds encrypted, server-only Google refresh-token storage
+and Calendar event references for bookings.
 
 The publishable key is intentionally browser-safe. Never expose the Supabase
 secret key to browser code.
 
-## Google login, Contacts, and Calendar setup
+## Google login and Calendar setup
 
 Normal login requests only the basic Google identity scopes (`openid`, email,
-profile) plus the narrow Calendar event scope needed to create and update
-events on the signed-in booker's primary Calendar. Google Contacts access is
-requested separately and only when a signed-in user selects **Import/refresh Enrollment**.
+profile) plus the narrow Calendar scope needed to create and update events on
+the signed-in booker's primary Calendar.
 
 ### 1. Create the Google OAuth client
 
@@ -112,24 +112,7 @@ The app encrypts the Google refresh token before storage. A successful booking c
 After adding or changing a Calendar scope, each existing user must select **Reconnect calendar** and approve the new Google consent screen once.
 Before saving a booking, the app checks the booker and selected attendees using Google Calendar free/busy data. It returns only `available`, `busy`, or `unknown`—never event titles, notes, or attendees. A busy or unavailable result shows a warning and requires the booker to deliberately choose **Book anyway**. The check can only see calendars that Google Workspace makes visible to the signed-in booker; colleagues must share free/busy availability or an administrator must configure an appropriate company-wide solution.
 
-### 4. Enable the Enrollment contact import
-
-In Google Cloud Console:
-
-1. Open **APIs & Services → Library** and enable **Google People API**.
-2. Open **Google Auth Platform → Data Access → Add or remove scopes**.
-3. Add this read-only scope:
-
-   ```text
-   https://www.googleapis.com/auth/contacts.readonly
-   ```
-
-4. If the OAuth audience is External and still in Testing, add each person who
-   will test the import as a test user.
-5. Keep the shared team contacts under a Google Contacts label named exactly
-   `Enrollment`.
-
-### 5. Restrict company domains (optional for the first test)
+### 4. Restrict company domains (optional for the first test)
 
 To reject Google accounts outside approved company domains, add a
 comma-separated list to `.env`:
@@ -157,9 +140,9 @@ The first page is now a Google sign-in gate. After successful login:
 - every booking API request includes the Supabase access token;
 - the server verifies that token with Supabase before reading or changing data;
 - attendees are optional, so an empty selection creates a solo booking;
-- saved contacts are searchable and manual attendee emails are remembered;
-- **Import/refresh Enrollment** asks for read-only Contacts permission and
-  copies only that label into the shared attendee directory.
+- saved contacts begin with the curated Playbook and O&H team list;
+- a booker can type any valid email address to invite a person outside that
+  list, and the address is permanently saved as a future suggestion.
 
 `npm start` creates the browser bundle with esbuild and starts the Node server. Supabase is the only runtime database.
 
@@ -176,7 +159,7 @@ The first page is now a Google sign-in gate. After successful login:
 - Pre-confirmation Google free/busy checks for the booker and selected attendees, with a deliberate **Book anyway** override when a calendar is busy or cannot be checked
 - Google-supplied booking owner name and organizer email
 - Required booking team (PLAYBOOK, O&H, or joint) and meeting title or purpose; optional attendees and notes
-- Searchable saved attendees, manual email entry, and read-only Google Contacts `Enrollment` import
+- Searchable curated team attendees plus permanently remembered manual email invites
 - Server-side room, date, past-time, office-hours, and duration validation
 - Atomic Postgres exclusion constraints preventing confirmed room/time overlaps
 - Postgres triggers protecting weekends, room blocks, active-room rules, and durations
@@ -237,7 +220,7 @@ refetches the protected availability API.
 - `/api/availability` — non-PII busy intervals
 - `/api/realtime-config` — browser-safe Realtime URL and publishable key
 - `/api/attendees` — protected saved-attendee suggestions
-- `/api/attendees/import-google` — protected read-only Enrollment import
+- `/api/attendees/import-google` — retired; returns `410 Gone` to keep the directory curated
 - `/api/calendar/status` — protected Calendar connection status
 - `/api/calendar/connect` — saves an encrypted Calendar refresh token after Google consent
 - `/api/calendar/availability` — returns only `available`, `busy`, or `unknown` for the proposed schedule
@@ -255,7 +238,6 @@ npm run check
 ```
 
 The API tests use an in-memory store double, not a second database. The Supabase migrations are checked for overlap, weekend, room-block, RLS, service-role, Realtime payload, and browser-configuration protections.
-The Google Contacts tests use a mock People API and do not access a real account.
 The Calendar tests use mocked Google OAuth and Calendar endpoints; they never access
 a real calendar.
 

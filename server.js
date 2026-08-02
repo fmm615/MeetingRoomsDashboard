@@ -864,24 +864,11 @@ function createRequestHandler({
         pathname === "/api/attendees/import-google" &&
         req.method === "POST"
       ) {
-        const input = await readJSON(req);
-        const providerToken =
-          typeof input.providerToken === "string"
-            ? input.providerToken
-            : "";
-        const contacts = await importGoogleContacts(
-          providerToken,
-          signedInUser
+        return sendError(
+          res,
+          410,
+          "The saved attendee directory is managed from the approved team list."
         );
-        await store.importAttendeeDirectory(
-          contacts,
-          now().toISOString()
-        );
-        return sendJSON(res, 200, {
-          contacts,
-          imported: contacts.length,
-          group: DEFAULT_GOOGLE_CONTACT_GROUP
-        });
       }
 
       if (pathname === "/api/rooms" && req.method === "GET") {
@@ -945,6 +932,8 @@ function createRequestHandler({
         }
         const row = await store.findBookingByTokenHash(tokenHash);
         if (!row) throw new Error("The created booking could not be loaded.");
+        // Approved contacts and manually invited people share the same search
+        // directory. A valid manual invite is remembered for future bookings.
         try {
           await store.rememberAttendeeEmails(
             value.attendeeEmails,
