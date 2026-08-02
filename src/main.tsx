@@ -686,11 +686,8 @@ function ProgressSteps({ selection }: { selection: Selection }) {
             data-step={stepNumber}
             aria-current={stepNumber === currentStep ? "step" : undefined}
           >
-            <span>{stepNumber}</span>
-            <div>
-              <small>Step {stepNumber}</small>
-              <strong>{["Date", "Room", "Time"][index]}</strong>
-            </div>
+            <span>{String(stepNumber).padStart(2, "0")}</span>
+            <strong>{["Date", "Room", "Time"][index]}</strong>
           </li>
         </React.Fragment>
       ))}
@@ -861,7 +858,7 @@ function RoomGrid({
           <span className="section-number">2</span>
           <div>
             <h2>Select a room or workspace</h2>
-            <p>Choose the space that fits your booking.</p>
+            <p>Choose the space that best fits your meeting.</p>
           </div>
         </div>
       </div>
@@ -957,7 +954,7 @@ function RoomGrid({
                     }
                     {...buttonMotion(reduced)}
                   >
-                    View guidelines
+                    <span aria-hidden="true">ⓘ</span> View guidelines
                   </motion.button>
                   <motion.button
                     type="button"
@@ -1342,10 +1339,10 @@ function BookingPage({
       <section className="hero">
         <div>
           <p className="eyebrow">ROOM AVAILABILITY</p>
-          <h1>Book a meeting room</h1>
+          <h1>Book the right space for your next meeting</h1>
           <p>
-            Choose a date, room or workspace, start time, and duration. No account
-            required.
+            Choose when and where you’d like to meet. We’ll handle the calendar
+            invitation and booking details.
           </p>
         </div>
         <div className="office-hours">
@@ -1555,6 +1552,7 @@ function AttendeeSelector({
   onImport,
 }: AttendeeSelectorProps) {
   const [query, setQuery] = useState("");
+  const reduced = Boolean(useReducedMotion());
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const comboboxRef = useRef<HTMLDivElement>(null);
@@ -1734,7 +1732,16 @@ function AttendeeSelector({
           <span className="attendee-chevron" aria-hidden="true">⌄</span>
         </button>
         {open && (
-          <div className="attendee-popover">
+          <motion.div
+            className="attendee-popover"
+            initial={{ opacity: 0, y: reduced ? 0 : 4, scale: reduced ? 1 : 0.985 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{
+              type: "tween",
+              duration: reduced ? MOTION_DURATIONS.reduced : MOTION_DURATIONS.control,
+              ease: MOTION_EASE,
+            }}
+          >
             <div className="attendee-search-wrap">
               <input
                 ref={searchInputRef}
@@ -1821,11 +1828,11 @@ function AttendeeSelector({
                 <p className="attendee-no-results">No matching contacts. Enter a complete email to add it.</p>
               )}
             </div>
-          </div>
+          </motion.div>
         )}
       </div>
       {!selected.length && (
-        <p className="attendee-empty">No attendees selected — solo booking.</p>
+        <p className="attendee-empty">No attendees added.</p>
       )}
       {inputError && (
         <p className="attendee-field-error" role="alert">
@@ -1856,13 +1863,9 @@ function AttendeeSelector({
       >
         {maximumCapacity === null
           ? "No room-specific capacity limit."
-          : `${selected.length + 1} of ${maximumCapacity} people selected, including the organizer. ${
-              remainingAttendees === 0
-                ? "Capacity reached."
-                : `${remainingAttendees} attendee ${
-                    remainingAttendees === 1 ? "space" : "spaces"
-                  } remaining.`
-            }`}
+          : `${selected.length + 1} of ${maximumCapacity} seats used · ${remainingAttendees === 0
+              ? "Capacity reached"
+              : `${remainingAttendees} available`}`}
       </p>
       {directoryError && (
         <p className="attendee-field-error" role="status">

@@ -402,6 +402,87 @@ h1 { font-size: clamp(34px, 4vw, 48px); line-height: 1.08; font-weight: 600; let
 .confirm-icon { background: #eaf6f2; color: var(--green); }
 .private-note { background: #faf9fc; color: var(--muted); }
 
+/* Meet Layla alignment: warm, editorial surfaces and pill-like product controls.
+   These remain presentation-only overrides for the established booking components. */
+.app-shell { min-height: 100vh; background: #fbfafc; }
+.topbar { position: sticky; top: 0; z-index: 8; padding-inline: clamp(20px, 5vw, 72px); background: rgba(255, 255, 255, .86); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-color: rgba(42, 0, 76, .09); }
+.brand span { background: #e7dfeb; }
+.calendar-connect-button, .sign-out-button { min-height: 36px; border-radius: 999px; padding-inline: 13px; }
+.sign-out-button { border-color: transparent; background: transparent; color: var(--muted); }
+.sign-out-button:hover:not(:disabled) { color: #3c0059; background: #f5f1f7; }
+main { max-width: 1240px; padding-top: 58px; padding-bottom: 96px; }
+.hero { align-items: center; margin-bottom: 38px; }
+.hero h1 { max-width: 770px; color: #24152f; font-size: clamp(36px, 4vw, 56px); font-weight: 600; line-height: 1.08; letter-spacing: -.045em; }
+.hero > div > p:last-child { max-width: 680px; margin-top: 13px; color: #5e5664; font-size: 16px; line-height: 1.62; }
+.office-hours { display: inline-flex; align-items: center; white-space: nowrap; border-color: #e8e1eb; border-radius: 999px; background: #faf4e8; color: #5e5664; font-size: 12px; }
+.office-hours strong { color: #24152f; font-weight: 600; }
+
+.steps { justify-content: center; gap: 0; padding: 12px 20px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.step { min-width: 0; gap: 9px; color: #8b8490; }
+.step > span { width: 27px; height: 27px; border: 1px solid #e1d9e6; border-radius: 50%; background: #fff; color: #7e7188; font-size: 10px; font-weight: 600; }
+.step strong { font-size: 13px; font-weight: 500; }
+.step.active { color: #2c0660; }
+.step.active > span { border-color: #2a004c; background: #2a004c; color: #fff; }
+.step-divider { max-width: 160px; margin: 0 16px; background: #e6deea; }
+
+.panel { padding: clamp(24px, 4vw, 38px); border-color: #e8e1eb; border-radius: 22px; box-shadow: 0 8px 28px rgba(42, 0, 76, .026); }
+.section-heading h2 { color: #24152f; font-size: clamp(21px, 2vw, 25px); font-weight: 600; }
+.section-heading p { margin-top: 5px; color: #6d6472; font-size: 14px; }
+.section-number { width: 31px; height: 31px; border-radius: 10px; background: #f0ebf4; color: #3c0d87; font-size: 12px; font-weight: 600; }
+.date-picker { min-height: 40px; border-radius: 999px; background: #fff; }
+.date-card { min-height: 104px; border-radius: 16px; background: #fff; color: #5e5664; }
+.date-card strong { color: #2a004c; font-size: 22px; }
+.date-card:hover:not(:disabled) { border-color: #cbbbd5; background: #faf4e8; }
+.selected-date-indicator { border-radius: 15px; background: #2a004c; box-shadow: 0 7px 18px rgba(42, 0, 76, .14); }
+.date-card.selected strong { color: #fff; }
+
+.room-card { min-height: 236px; overflow: hidden; border-radius: 19px; }
+.room-card::before { content: ""; position: absolute; top: 0; left: 22px; width: 34px; height: 3px; border-radius: 0 0 999px 999px; background: #472a72; }
+.room-card[data-room-card="meeting-a"]::before { background: #507c6d; }
+.room-card[data-room-card="meeting-b"]::before { background: #81006c; }
+.room-card[data-room-card="quiet-pods"]::before { background: #207c7c; }
+.room-card h3 { margin-top: 5px; color: #24152f; font-size: 19px; }
+.room-card.selected { border-color: #2a004c; background: #faf8fc; box-shadow: inset 0 0 0 1px #2a004c, 0 10px 25px rgba(42, 0, 76, .055); }
+.room-selected-indicator { border-radius: 999px; background: #f0ebf4; color: #2c0660; }
+.room-badge { background: #faf4e8; color: #5b4963; font-weight: 500; }
+.room-badge + .room-badge { background: #f0ebf4; color: #4c2878; }
+.guidelines-button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; color: #3c0d87; font-weight: 500; }
+.guidelines-button:hover:not(:disabled) { color: #81006c; text-decoration: underline; text-underline-offset: 3px; }
+.select-room-button { min-height: 40px; border-radius: 999px; padding-inline: 16px; }
+
+.time-slot, .duration-option { min-height: 48px; border-radius: 13px; font-weight: 500; }
+.time-slot { border-color: #ddd3e3; color: #3e2760; }
+.time-slot:hover:not(:disabled) { border-color: #aa96c0; background: #f5f1f7; }
+.time-slot.selected, .duration-option.selected { background: #2a004c; border-color: #2a004c; box-shadow: 0 5px 13px rgba(42, 0, 76, .16); }
+.duration-option { background: #fff; }
+.selection-summary { display: grid; gap: 3px; min-height: 66px; border: 1px solid #e5dced; border-left: 0; border-radius: 14px; background: #f5f1f7; color: #5e5664; font-size: 13px; }
+.selection-summary::before { content: "Selected time"; color: #7a6d85; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.selection-summary strong { color: #2a004c; font-size: 15px; }
+
+.drawer { border-left: 1px solid #e8e1eb; background: #fffdfd; }
+.drawer-header { padding: 30px 30px 23px; background: #fff; }
+.drawer-header h2 { color: #24152f; font-size: 26px; }
+.drawer-body { padding: 28px 30px; }
+.booking-summary { background: #f5f1f7; border-color: #e7deec; border-radius: 16px; }
+.booking-summary dt { font-size: 12px; }
+.booking-summary dd { font-weight: 500; }
+.drawer label { font-size: 14px; font-weight: 500; }
+.drawer input, .drawer select, .drawer textarea, .attendee-trigger { min-height: 50px; border-color: #e1d8e6; border-radius: 14px; font-size: 15px; }
+.drawer textarea { min-height: 128px; }
+.attendee-directory-row { align-items: center; gap: 12px; padding: 11px 12px; border: 0; border-radius: 14px; background: #f5f1f7; }
+.attendee-directory-row p { color: #6c6270; font-size: 11px; }
+.attendee-import-button { min-height: 38px; border-radius: 999px; background: #fff; font-size: 11px; }
+.attendee-capacity { font-size: 11px; font-weight: 500; }
+.room-reminder { border: 1px solid #d7ebe5; border-left: 3px solid #6ba696; border-radius: 14px; background: #eaf5f1; color: #48635c; font-size: 13px; }
+.room-reminder strong { font-size: 14px; }
+.drawer-footer { padding: 18px 30px max(18px, env(safe-area-inset-bottom)); background: rgba(255, 255, 255, .96); backdrop-filter: blur(12px); }
+.drawer-footer .primary-button, .drawer-footer .secondary-button { min-height: 52px; border-radius: 15px; font-size: 14px; }
+.drawer-footer .primary-button { min-width: 190px; background: #2a004c; }
+.drawer-footer .secondary-button { min-width: 112px; }
+.primary-button { background: #2a004c; }
+.primary-button:hover:not(:disabled) { background: #3c0059; }
+.continue-bar { margin-top: 24px; padding: 16px 0 0; border-top: 1px solid #eee8f1; }
+
 @keyframes skeleton-pulse {
   from { opacity: .55; }
   to { opacity: 1; }
@@ -440,16 +521,16 @@ h1 { font-size: clamp(34px, 4vw, 48px); line-height: 1.08; font-weight: 600; let
   .auth-card { padding: 30px 24px; }
   .hero { align-items: flex-start; gap: 20px; }
   .office-hours { display: none; }
-  h1 { font-size: 27px; }
+  h1 { font-size: clamp(34px, 10vw, 40px); }
   .steps { padding: 13px; }
   .step { min-width: 30px; }
-  .step div { display: none; }
+  .step strong { display: none; }
   .step-divider { margin: 0 10px; }
   .panel { padding: 18px; }
   .date-strip { grid-template-columns: repeat(5, minmax(68px, 1fr)); overflow-x: auto; padding-bottom: 4px; }
   .room-grid { grid-template-columns: 1fr; }
   .time-duration-layout { grid-template-columns: 1fr; }
-  .time-grid { grid-template-columns: repeat(4, 1fr); }
+  .time-grid { grid-template-columns: repeat(3, 1fr); }
   .guidelines-drawer { top: auto; bottom: 0; width: 100%; height: auto; max-height: 92dvh; border-radius: 16px 16px 0 0; }
   .legend { flex-wrap: wrap; justify-content: flex-end !important; }
   .continue-bar { align-items: stretch; flex-direction: column; }
@@ -471,7 +552,7 @@ h1 { font-size: clamp(34px, 4vw, 48px); line-height: 1.08; font-weight: 600; let
   .attendee-import-button { width: 100%; }
   .attendee-popover { right: 0; }
   .steps, .panel { min-width: 0; max-width: 100%; }
-  .time-grid { grid-template-columns: repeat(3, 1fr); }
+  .time-grid { grid-template-columns: repeat(2, 1fr); }
   .drawer-header, .drawer-body { padding-left: 18px; padding-right: 18px; }
   .drawer-footer { padding-left: 18px; padding-right: 18px; }
   .confirmation-details, .private-note, .private-link { margin-left: 18px; margin-right: 18px; }
