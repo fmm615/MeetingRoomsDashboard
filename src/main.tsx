@@ -1528,7 +1528,6 @@ function LoadingButtonLabel({
 
 interface AttendeeSelectorProps {
   contacts: AttendeeContact[];
-  loading: boolean;
   directoryError: string;
   draft: BookingDraft;
   onDraft: (next: BookingDraft) => void;
@@ -1538,7 +1537,6 @@ interface AttendeeSelectorProps {
 // creation happen only in its popover, keeping multi-select one combobox.
 function AttendeeSelector({
   contacts,
-  loading,
   directoryError,
   draft,
   onDraft,
@@ -1689,7 +1687,6 @@ function AttendeeSelector({
           type="button"
           role="combobox"
           aria-labelledby="attendee-label"
-          aria-describedby="attendee-help"
           aria-controls="attendee-options"
           aria-expanded={open}
           aria-haspopup="listbox"
@@ -1817,15 +1814,6 @@ function AttendeeSelector({
           {inputError}
         </p>
       )}
-      <div className="attendee-directory-row">
-        <p id="attendee-help">
-          {loading
-            ? "Loading saved contacts…"
-            : contacts.length
-              ? `${contacts.length} team contacts — select from the directory or enter any work email.`
-              : "No saved contacts yet. You can enter an email manually."}
-        </p>
-      </div>
       {directoryError && (
         <p className="attendee-field-error" role="status">
           {directoryError}
@@ -1845,7 +1833,6 @@ interface DetailsDrawerProps {
   draft: BookingDraft;
   identityLocked: boolean;
   attendeeContacts: AttendeeContact[];
-  attendeeContactsLoading: boolean;
   attendeeDirectoryError: string;
   editing: boolean;
   submitting: boolean;
@@ -1873,7 +1860,6 @@ function DetailsDrawer({
   draft,
   identityLocked,
   attendeeContacts,
-  attendeeContactsLoading,
   attendeeDirectoryError,
   editing,
   submitting,
@@ -2192,7 +2178,6 @@ function DetailsDrawer({
             </label>
             <AttendeeSelector
               contacts={attendeeContacts}
-              loading={attendeeContactsLoading}
               directoryError={attendeeDirectoryError}
               draft={draft}
               onDraft={onDraft}
@@ -2700,8 +2685,6 @@ function App() {
   const [attendeeContacts, setAttendeeContacts] = useState<
     AttendeeContact[]
   >([]);
-  const [attendeeContactsLoading, setAttendeeContactsLoading] =
-    useState(false);
   const [attendeeDirectoryError, setAttendeeDirectoryError] = useState("");
   const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(
     null,
@@ -2900,7 +2883,6 @@ function App() {
   }, [authStatus, calendarCredentials, connectGoogleCalendar]);
 
   const loadAttendeeContacts = useCallback(async () => {
-    setAttendeeContactsLoading(true);
     setAttendeeDirectoryError("");
     try {
       const result = await api<{ contacts?: AttendeeContact[] }>(
@@ -2911,8 +2893,6 @@ function App() {
       );
     } catch (error) {
       setAttendeeDirectoryError((error as ApiError).message);
-    } finally {
-      setAttendeeContactsLoading(false);
     }
   }, []);
 
@@ -3910,7 +3890,6 @@ function App() {
         draft={visibleDraft}
         identityLocked
         attendeeContacts={attendeeContacts}
-        attendeeContactsLoading={attendeeContactsLoading}
         attendeeDirectoryError={attendeeDirectoryError}
         editing={Boolean(editingToken)}
         submitting={submitting}
