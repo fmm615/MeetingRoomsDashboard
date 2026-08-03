@@ -223,16 +223,6 @@ class MemoryStore {
     ) {
       throw storeFailure("ROOM_BLOCKED");
     }
-    const attendees = String(value.attendees || "")
-      .split(/[,;\n]+/)
-      .map(email => email.trim())
-      .filter(Boolean);
-    if (
-      room.maximum_capacity !== null &&
-      attendees.length + 1 > room.maximum_capacity
-    ) {
-      throw storeFailure("BOOKING_CAPACITY");
-    }
     if (
       this.bookings.some(
         booking =>
@@ -452,27 +442,6 @@ test("validates durations, tampered fields, dates, office hours, and weekends", 
     [{ start: 4, end: 4 }, /between/i],
     [{ date: "2026-07-27", start: 0, end: 1 }, /past/i],
     [{ room: "quiet-pods", start: 0, end: 1 }, /30 or 45/i],
-    [
-      {
-        attendees:
-          "a@test.com,b@test.com,c@test.com,d@test.com,e@test.com,f@test.com,g@test.com"
-      },
-      /up to 7 people including the organizer/i
-    ],
-    [
-      {
-        room: "meeting-a",
-        attendees: "a@test.com,b@test.com"
-      },
-      /up to 2 people including the organizer/i
-    ],
-    [
-      {
-        room: "quiet-pods",
-        attendees: "a@test.com,b@test.com,c@test.com"
-      },
-      /up to 3 people including the organizer/i
-    ]
   ];
   for (const [change, expected] of invalidCases) {
     const result = await createBooking(app, {

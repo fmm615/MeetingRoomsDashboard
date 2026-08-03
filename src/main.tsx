@@ -595,7 +595,7 @@ function Header({
               type="button"
               onClick={onViewBooking}
             >
-              View my booking
+              My booking
             </button>
           )}
           <button
@@ -1530,7 +1530,6 @@ interface AttendeeSelectorProps {
   contacts: AttendeeContact[];
   loading: boolean;
   directoryError: string;
-  maximumCapacity: number | null;
   draft: BookingDraft;
   onDraft: (next: BookingDraft) => void;
 }
@@ -1541,7 +1540,6 @@ function AttendeeSelector({
   contacts,
   loading,
   directoryError,
-  maximumCapacity,
   draft,
   onDraft,
 }: AttendeeSelectorProps) {
@@ -1563,12 +1561,6 @@ function AttendeeSelector({
     [contacts],
   );
   const normalizedQuery = query.trim().toLowerCase();
-  const attendeeLimit =
-    maximumCapacity === null ? null : Math.max(0, maximumCapacity - 1);
-  const capacityReached =
-    attendeeLimit !== null && selected.length >= attendeeLimit;
-  const remainingAttendees =
-    attendeeLimit === null ? null : Math.max(0, attendeeLimit - selected.length);
   const suggestions = useMemo(
     () =>
       contacts
@@ -1613,7 +1605,6 @@ function AttendeeSelector({
   };
 
   const openMenu = () => {
-    if (capacityReached) return;
     setOpen(true);
     setActiveIndex(-1);
   };
@@ -1636,10 +1627,6 @@ function AttendeeSelector({
   };
 
   const addEmail = (rawValue: string) => {
-    if (capacityReached) {
-      setInputError("Room capacity reached. Remove an attendee before adding another.");
-      return false;
-    }
     const email = rawValue.trim().toLowerCase();
     if (!validAttendeeEmail(email)) {
       setInputError("Enter a complete email address.");
@@ -1702,11 +1689,10 @@ function AttendeeSelector({
           type="button"
           role="combobox"
           aria-labelledby="attendee-label"
-          aria-describedby="attendee-help attendee-capacity"
+          aria-describedby="attendee-help"
           aria-controls="attendee-options"
           aria-expanded={open}
           aria-haspopup="listbox"
-          disabled={capacityReached}
           onClick={() => (open ? closeMenu() : openMenu())}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
@@ -1717,11 +1703,9 @@ function AttendeeSelector({
           }}
         >
           <span>
-            {capacityReached
-              ? "Room capacity reached"
-              : selected.length
-                ? "Add another attendee"
-                : "Select attendees"}
+            {selected.length
+              ? "Add another attendee"
+              : "Select attendees"}
           </span>
           <span className="attendee-chevron" aria-hidden="true">⌄</span>
         </button>
@@ -1842,17 +1826,6 @@ function AttendeeSelector({
               : "No saved contacts yet. You can enter an email manually."}
         </p>
       </div>
-      <p
-        className={`attendee-capacity ${capacityReached ? "reached" : ""}`}
-        id="attendee-capacity"
-        role="status"
-      >
-        {maximumCapacity === null
-          ? "No room-specific capacity limit."
-          : `${selected.length + 1} of ${maximumCapacity} seats used · ${remainingAttendees === 0
-              ? "Capacity reached"
-              : `${remainingAttendees} available`}`}
-      </p>
       {directoryError && (
         <p className="attendee-field-error" role="status">
           {directoryError}
@@ -2221,7 +2194,6 @@ function DetailsDrawer({
               contacts={attendeeContacts}
               loading={attendeeContactsLoading}
               directoryError={attendeeDirectoryError}
-              maximumCapacity={room?.maximumCapacity ?? null}
               draft={draft}
               onDraft={onDraft}
             />
@@ -2764,7 +2736,9 @@ function App() {
   const [submitting, setSubmitting] = useState(false);
   const [editingToken, setEditingToken] = useState<string | null>(null);
   const [managedBooking, setManagedBooking] = useState<Booking | null>(null);
-  const [managementToken, setManagementToken] = useState("");
+  const [managementToken, setManagementToken] = useState(
+    () => window.sessionStorage.getItem("playbook-current-booking-token") || "",
+  );
   const [managedError, setManagedError] = useState("");
   const [routeLoading, setRouteLoading] = useState(false);
   const [serviceError, setServiceError] = useState("");
@@ -2780,9 +2754,18 @@ function App() {
   const editingTokenRef = useRef(editingToken);
   const submittingRef = useRef(submitting);
 
+  // Keep the latest secure management token for this browser session. Returning
+  // home or refreshing the app must not make a just-edited booking disappear.
   useEffect(() => {
-    let active = true;
+    if (managementToken) {
+      window.sessionStorage.setItem("playbook-current-booking-token", managementToken);
+    } else {
+      window.sessionStorage.removeItem("playbook-current-booking-token");
+    }
+  }, [managementToken]);
+  useEffect(() => {
     let unsubscribeAuth: (() => void) | null = null;
+    let active = true;
 
     const initialiseAuth = async () => {
       try {
@@ -3091,7 +3074,7 @@ function App() {
       setManagedError("");
       if (!retainCurrentBooking) {
         setManagedBooking(null);
-        setManagementToken("");
+        // Keep the current booking shortcut available after returning home.
       }
       setDialog(null);
       const identity = identityFromUser(authUser);

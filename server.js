@@ -133,15 +133,6 @@ function durationError(room) {
   return `${room.name} cannot be booked for the selected duration.`;
 }
 
-function capacityError(room) {
-  const maximum = room?.maximumCapacity;
-  if (!Number.isInteger(maximum)) {
-    return "The selected room cannot hold that many people.";
-  }
-  const attendeeMaximum = Math.max(0, maximum - 1);
-  return `${room.name} allows up to ${maximum} people including the organizer. Select no more than ${attendeeMaximum} ${attendeeMaximum === 1 ? "attendee" : "attendees"}.`;
-}
-
 function slotToTime(slot) {
   const minutes = OPEN_HOUR * 60 + slot * SLOT_MINUTES;
   const date = new Date(
@@ -291,12 +282,6 @@ async function validateBooking(
     return { error: "Select an active room or workspace." };
   }
   const room = publicRoom(roomRow);
-  if (
-    room.maximumCapacity !== null &&
-    attendeeResult.emails.length + 1 > room.maximumCapacity
-  ) {
-    return { error: capacityError(room) };
-  }
   if (
     !Number.isInteger(start) ||
     !Number.isInteger(end) ||
@@ -450,9 +435,6 @@ function databaseError(error, room) {
   }
   if (message.includes("BOOKING_DURATION")) {
     return { status: 400, message: durationError(room) };
-  }
-  if (message.includes("BOOKING_CAPACITY")) {
-    return { status: 400, message: capacityError(room) };
   }
   if (message.includes("ROOM_INACTIVE")) {
     return {
@@ -953,6 +935,12 @@ function createRequestHandler({
         });
       }
 
+      if (pathname === "/api/my-bookings" && req.method === "GET") {
+        // The authenticated Google email is the authority here; no email
+        // supplied by the browser can change which bookings are returned.
+        const rows = await store.listBookingsForEmail(signedInUser.email);
+        return sendJSON(res, 200, { bookings: rows.map(publicBooking) });
+      }
       const token = tokenFromPath(pathname);
       const tokenHash = token ? hashToken(token) : "";
 
